@@ -1,0 +1,20 @@
+# ── Secrets (never commit) ────────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Generated weekly output ───────────────────────────────────────────────────
+RethinkRoutes_*/
+
+# ── Unrelated files in this folder (not part of the route generator) ─────────
+birthday-site/
+cal_analyze.py
+organize_downloads.py
+build_route_map.py
+optimize_route_map.py
+_test.py
+_write_script.py
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.env
