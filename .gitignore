@@ -13,6 +13,9 @@ optimize_route_map.py
 _test.py
 _write_script.py
 
+# ── Claude Code internals ─────────────────────────────────────────────────────
+.claude/
+
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
