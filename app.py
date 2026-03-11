@@ -35,6 +35,74 @@ st.set_page_config(
     layout="wide",
 )
 
+# ── Global CSS ────────────────────────────────────────────────────────────────
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+html, body, [class*="css"] { font-family: 'Inter', -apple-system, sans-serif; }
+h1 { font-weight: 800 !important; letter-spacing: -0.03em !important; }
+h2 { font-weight: 700 !important; letter-spacing: -0.02em !important; }
+h3 { font-weight: 600 !important; }
+
+[data-testid="stSidebar"] {
+    background-color: #111111 !important;
+    border-right: 1px solid #242424;
+}
+
+[data-testid="stMetric"] {
+    background-color: #171717;
+    border: 1px solid #242424;
+    border-radius: 10px;
+    padding: 1rem 1.25rem !important;
+}
+[data-testid="stMetricLabel"] p {
+    color: #777 !important;
+    font-size: 0.72rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+[data-testid="stMetricValue"] { font-weight: 700 !important; }
+
+.stTabs [data-baseweb="tab-list"] {
+    background-color: #171717;
+    border-radius: 8px;
+    padding: 4px;
+    gap: 2px;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 6px;
+    color: #777 !important;
+    font-weight: 500;
+}
+.stTabs [aria-selected="true"] {
+    background-color: #242424 !important;
+    color: #f2f2f2 !important;
+}
+.stTabs [data-baseweb="tab-highlight"] { display: none; }
+
+[data-testid="stExpander"] {
+    border: 1px solid #242424 !important;
+    border-radius: 8px !important;
+}
+
+hr { border-color: #242424 !important; }
+
+.stDownloadButton > button {
+    background-color: transparent !important;
+    border: 1px solid #46F694 !important;
+    color: #46F694 !important;
+    font-weight: 600;
+}
+.stDownloadButton > button:hover {
+    background-color: rgba(70, 246, 148, 0.08) !important;
+}
+
+[data-testid="stCaptionContainer"] p { color: #777 !important; }
+</style>
+""", unsafe_allow_html=True)
+
 # ── Password gate ─────────────────────────────────────────────────────────────
 
 def check_password():
@@ -47,8 +115,17 @@ def check_password():
         return True
 
     with st.form("login"):
-        st.markdown("### Rethink Food — Route Generator")
-        st.markdown("Enter the team password to continue.")
+        st.markdown("""
+<div style="text-align:center; padding:1rem 0 1.5rem;">
+    <span style="display:inline-block; width:10px; height:10px; background:#46F694;
+          border-radius:50%; margin-right:8px; vertical-align:middle;"></span>
+    <span style="font-size:1.4rem; font-weight:800; letter-spacing:-0.02em;
+          vertical-align:middle;">Rethink Food</span>
+    <p style="color:#777; margin-top:0.5rem; font-size:0.9rem;">
+        Route Generator &mdash; Team Access
+    </p>
+</div>
+""", unsafe_allow_html=True)
         password = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Log in", use_container_width=True)
 
@@ -302,8 +379,19 @@ def run_generation(all_stops, all_flags):
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## Rethink Food")
-    st.markdown("### Route Generator")
+    st.markdown("""
+<div style="margin-bottom:0.75rem;">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:2px;">
+        <div style="width:10px; height:10px; background:#46F694; border-radius:50%;
+             flex-shrink:0;"></div>
+        <span style="font-weight:800; font-size:1.05rem; letter-spacing:-0.01em;">
+            Rethink Food
+        </span>
+    </div>
+    <span style="color:#666; font-size:0.72rem; text-transform:uppercase;
+          letter-spacing:0.1em; padding-left:18px;">Route Generator</span>
+</div>
+""", unsafe_allow_html=True)
     st.divider()
 
     uploaded_file = st.file_uploader(
@@ -359,28 +447,39 @@ results = st.session_state.get("results")
 # ── Empty / landing state ─────────────────────────────────────────────────────
 
 if not results:
-    st.title("Rethink Food — Route Generator")
-    st.markdown(
-        "Upload a member list using the sidebar, then click **Generate Routes**."
-    )
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("#### What you'll get")
-        st.markdown(
-            "- Optimized interactive map for each driver route\n"
-            "- Downloadable stop manifest per route\n"
-            "- Kitchen packing list (box counts + allergens)\n"
-            "- Flags report for anomalies to review before delivery"
-        )
-    with col2:
-        st.markdown("#### How it works")
-        st.markdown(
-            "- Active members are automatically grouped into 8 geographic routes\n"
-            "- Stops are sequenced using nearest-neighbor + 2-opt optimization\n"
-            "- Addresses are geocoded once and cached — subsequent weeks are instant\n"
-            "- New or unrecognized zip codes are flagged automatically"
-        )
+    st.markdown("""
+<div style="margin-bottom:2rem;">
+    <h1 style="font-size:2.2rem; font-weight:800; letter-spacing:-0.04em; margin-bottom:0.5rem;">
+        Route Generator
+    </h1>
+    <p style="color:#777; font-size:1rem; margin:0;">
+        Upload a member list in the sidebar, then click
+        <span style="color:#46F694; font-weight:600;">Generate Routes</span>.
+    </p>
+</div>
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+    <div style="background:#171717; border:1px solid #242424; border-radius:12px; padding:1.5rem;">
+        <div style="color:#46F694; font-size:0.68rem; text-transform:uppercase;
+             letter-spacing:0.12em; margin-bottom:1rem; font-weight:700;">What you'll get</div>
+        <ul style="color:#ccc; margin:0; padding-left:1.1rem; line-height:2; font-size:0.9rem;">
+            <li>Optimized interactive map for each driver route</li>
+            <li>Downloadable stop manifest per route</li>
+            <li>Kitchen packing list (box counts + allergens)</li>
+            <li>Flags report for anomalies to review</li>
+        </ul>
+    </div>
+    <div style="background:#171717; border:1px solid #242424; border-radius:12px; padding:1.5rem;">
+        <div style="color:#46F694; font-size:0.68rem; text-transform:uppercase;
+             letter-spacing:0.12em; margin-bottom:1rem; font-weight:700;">How it works</div>
+        <ul style="color:#ccc; margin:0; padding-left:1.1rem; line-height:2; font-size:0.9rem;">
+            <li>Members grouped into 8 geographic routes by zip code</li>
+            <li>Stops sequenced using nearest-neighbor + 2-opt TSP</li>
+            <li>Addresses cached &mdash; subsequent weeks are instant</li>
+            <li>Unrecognized zip codes flagged automatically</li>
+        </ul>
+    </div>
+</div>
+""", unsafe_allow_html=True)
     st.stop()
 
 # ── Results ───────────────────────────────────────────────────────────────────
