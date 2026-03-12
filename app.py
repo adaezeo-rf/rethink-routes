@@ -17,9 +17,15 @@ from geopy.geocoders import Nominatim
 
 from rethink_routes import (
     CACHE_FILE,
+    DEPOT_BRONX_END,
+    DEPOT_OTHER_END,
+    DEPOT_START,
     MANIFEST_HEADERS,
+    MAX_STOPS_HARD,
+    MAX_STOPS_SOFT,
     ROUTES,
     build_map,
+    check_stop_limit,
     clean_box,
     geocode_stop,
     load_cache,
@@ -269,24 +275,36 @@ def run_generation(all_stops, all_flags):
     geocache   = load_cache()
     geolocator = Nominatim(user_agent="rethink_food_app")
 
-    zip_to_route = {
-        z: (letter, name, borough)
-        for letter, name, borough, zips in ROUTES
-        for z in zips
-    }
+    # Build zip -> routes mapping (supports overlapping zips across days)
+    zip_to_routes = {}
+    for letter, name, borough, day, zips in ROUTES:
+        for z in zips:
+            zip_to_routes.setdefault(z, []).append((letter, name, borough, day))
 
     route_buckets = {letter: [] for letter, *_ in ROUTES}
     flags = list(all_flags)
 
     for stop in all_stops:
-        assignment = zip_to_route.get(stop["zipcode"])
-        if assignment:
-            route_buckets[assignment[0]].append((stop, assignment[2]))
-        else:
+        matching = zip_to_routes.get(stop["zipcode"], [])
+        if not matching:
             flags.append(
                 f"Member {stop['member_id']} (zip {stop['zipcode']}) "
                 "not assigned to any route — add zip to ROUTES in rethink_routes.py"
             )
+        elif len(matching) == 1:
+            route_buckets[matching[0][0]].append((stop, matching[0][2]))
+        else:
+            # Load-balance: assign to the matching route with fewest stops so far
+            best = min(matching, key=lambda r: len(route_buckets[r[0]]))
+            route_buckets[best[0]].append((stop, best[2]))
+
+    # ── Geocode depots ────────────────────────────────────────────────────────
+    depot_start_latlon = geocode_stop(
+        geolocator, DEPOT_START["addr1"], DEPOT_START["zipcode"], DEPOT_START["borough"], geocache)
+    depot_bronx_latlon = geocode_stop(
+        geolocator, DEPOT_BRONX_END["addr1"], DEPOT_BRONX_END["zipcode"], DEPOT_BRONX_END["borough"], geocache)
+    depot_other_latlon = geocode_stop(
+        geolocator, DEPOT_OTHER_END["addr1"], DEPOT_OTHER_END["zipcode"], DEPOT_OTHER_END["borough"], geocache)
 
     # ── Geocoding progress ────────────────────────────────────────────────────
     n_cached = sum(1 for s in all_stops if (s["addr1"], s["zipcode"]) in geocache)
@@ -299,18 +317,18 @@ def run_generation(all_stops, all_flags):
         + (f" (~{n_new}s)" if n_new else "")
     )
 
-    progress_bar  = st.progress(0, text="Starting geocoding...")
-    status_text   = st.empty()
+    progress_bar = st.progress(0, text="Starting geocoding...")
+    status_text  = st.empty()
 
     for i, stop in enumerate(all_stops):
-        assignment = zip_to_route.get(stop["zipcode"])
-        borough    = assignment[2] if assignment else "Queens"
+        matching = zip_to_routes.get(stop["zipcode"])
+        borough  = matching[0][2] if matching else "Queens"
 
         cached = (stop["addr1"], stop["zipcode"]) in geocache
         if not cached:
             status_text.caption(f"Geocoding: {stop['addr1']}, {stop['zipcode']}...")
 
-        result        = geocode_stop(geolocator, stop["addr1"], stop["zipcode"], borough, geocache)
+        result         = geocode_stop(geolocator, stop["addr1"], stop["zipcode"], borough, geocache)
         stop["latlon"] = result
 
         if result is None and not cached:
@@ -329,7 +347,7 @@ def run_generation(all_stops, all_flags):
     results, kitchen_rows = [], []
 
     with st.spinner("Optimizing routes..."):
-        for letter, name, borough, zips in ROUTES:
+        for letter, name, borough, day, zips in ROUTES:
             entries = route_buckets[letter]
             if not entries:
                 continue
@@ -338,7 +356,16 @@ def run_generation(all_stops, all_flags):
             if not geocoded:
                 continue
 
-            ordered, orig_dist, opt_dist = optimize_route(geocoded)
+            depot_end_latlon = depot_bronx_latlon if borough == "Bronx" else depot_other_latlon
+            depot_end_info   = DEPOT_BRONX_END    if borough == "Bronx" else DEPOT_OTHER_END
+
+            ordered, orig_dist, opt_dist = optimize_route(
+                geocoded, depot_start_latlon, depot_end_latlon)
+
+            # Stop limit check
+            limit_warning = check_stop_limit(ordered)
+            if limit_warning:
+                flags.append(f"Route {letter} ({name.replace('_',' ')}): {limit_warning}")
 
             box_counts     = {"Large": 0, "Medium": 0, "Small": 0, "Unknown": 0}
             allergen_notes = []
@@ -347,26 +374,34 @@ def run_generation(all_stops, all_flags):
                 if s["allergens"] and s["allergens"].lower() not in ("none", ""):
                     allergen_notes.append(f"Member {s['member_id']}: {s['allergens']}")
 
-            m        = build_map(ordered, letter, name, opt_dist)
+            depot_s  = {**DEPOT_START,    "latlon": depot_start_latlon}
+            depot_e  = {**depot_end_info, "latlon": depot_end_latlon}
+            m        = build_map(ordered, letter, name, opt_dist,
+                                 day=day, depot_start=depot_s, depot_end=depot_e)
             map_html = m._repr_html_() if m else None
 
             results.append({
-                "letter":     letter,
-                "name":       name.replace("_", " "),
-                "stops":      ordered,
-                "orig_dist":  orig_dist,
-                "opt_dist":   opt_dist,
-                "box_counts": box_counts,
-                "map_html":   map_html,
+                "letter":        letter,
+                "name":          name.replace("_", " "),
+                "day":           day,
+                "borough":       borough,
+                "stops":         ordered,
+                "orig_dist":     orig_dist,
+                "opt_dist":      opt_dist,
+                "box_counts":    box_counts,
+                "map_html":      map_html,
+                "limit_warning": limit_warning,
+                "depot_start":   DEPOT_START["label"],
+                "depot_end":     depot_end_info["label"],
             })
 
             kitchen_rows.append({
-                "Route":         f"Route {letter} — {name.replace('_', ' ')}",
-                "Total Stops":   len(ordered),
-                "Large":         box_counts.get("Large", 0),
-                "Medium":        box_counts.get("Medium", 0),
-                "Small":         box_counts.get("Small", 0),
-                "Unknown":       box_counts.get("Unknown", 0),
+                "Route":          f"Route {letter} — {name.replace('_', ' ')} ({day})",
+                "Total Stops":    len(ordered),
+                "Large":          box_counts.get("Large", 0),
+                "Medium":         box_counts.get("Medium", 0),
+                "Small":          box_counts.get("Small", 0),
+                "Unknown":        box_counts.get("Unknown", 0),
                 "Allergen Notes": "; ".join(allergen_notes),
             })
 
@@ -472,10 +507,10 @@ if not results:
         <div style="color:#46F694; font-size:0.68rem; text-transform:uppercase;
              letter-spacing:0.12em; margin-bottom:1rem; font-weight:700;">How it works</div>
         <ul style="color:#ccc; margin:0; padding-left:1.1rem; line-height:2; font-size:0.9rem;">
-            <li>Members grouped into 8 geographic routes by zip code</li>
-            <li>Stops sequenced using nearest-neighbor + 2-opt TSP</li>
+            <li>Members assigned to 14 routes across Mon&ndash;Fri</li>
+            <li>Stops sequenced from Tribeca depot using TSP optimization</li>
             <li>Addresses cached &mdash; subsequent weeks are instant</li>
-            <li>Unrecognized zip codes flagged automatically</li>
+            <li>Routes over 25 stops (28 if dense) flagged automatically</li>
         </ul>
     </div>
 </div>
@@ -521,10 +556,13 @@ for i, route in enumerate(results):
             saved_pct = ((route['orig_dist'] - route['opt_dist']) / route['orig_dist'] * 100) \
                 if route['orig_dist'] > 0 else 0
             st.caption(
+                f"{route['day']}  ·  "
                 f"{len(route['stops'])} stops  ·  "
-                f"**{route['opt_dist']:.1f} mi** optimized  ·  "
-                f"{route['orig_dist']:.1f} mi unoptimized  ·  "
+                f"**{route['opt_dist']:.1f} mi** total (incl. depot legs)  ·  "
                 f"saved {saved_pct:.0f}%"
+            )
+            st.caption(
+                f"Start: {route['depot_start']}  →  End: {route['depot_end']}"
             )
         with right:
             st.download_button(
@@ -534,6 +572,14 @@ for i, route in enumerate(results):
                 mime="text/csv",
                 use_container_width=True,
             )
+
+        # Stop limit warning
+        if route.get("limit_warning"):
+            n = len(route["stops"])
+            if n > MAX_STOPS_SOFT:
+                st.error(f"Over capacity: {route['limit_warning']}")
+            else:
+                st.warning(f"Stop limit: {route['limit_warning']}")
 
         # Map
         if route["map_html"]:
