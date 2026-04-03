@@ -306,6 +306,13 @@ def run_generation(all_stops, all_flags):
     depot_other_latlon = geocode_stop(
         geolocator, DEPOT_OTHER_END["addr1"], DEPOT_OTHER_END["zipcode"], DEPOT_OTHER_END["borough"], geocache)
 
+    if not depot_start_latlon or not depot_bronx_latlon or not depot_other_latlon:
+        st.error(
+            "Failed to geocode one or more depot addresses. "
+            "Check your internet connection and try again."
+        )
+        return
+
     # ── Geocoding progress ────────────────────────────────────────────────────
     n_cached = sum(1 for s in all_stops if (s["addr1"], s["zipcode"]) in geocache)
     n_new    = len(all_stops) - n_cached
