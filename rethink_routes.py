@@ -19,6 +19,7 @@ import csv
 import io
 import json
 import math
+import re
 import sys
 import time
 import warnings
@@ -130,11 +131,28 @@ ROUTES = [
 ]
 
 BOX_COLORS = {
-    "Large":   "#e74c3c",
-    "Medium":  "#e67e22",
-    "Small":   "#2980b9",
-    "Unknown": "#7f8c8d",
+    "Large":     "#e74c3c",
+    "Medium":    "#e67e22",
+    "Small":     "#2980b9",
+    "Four-Date": "#8e44ad",
+    "Unknown":   "#7f8c8d",
 }
+
+MAX_ROUTE_MILES = 25.0
+
+ZIP_OVERRIDES = {
+    "11385": "B",  # Ridgewood — better with Brooklyn route (near parking lot)
+}
+
+# ── Borough bounding boxes for geocode validation ────────────────────────────
+
+BOROUGH_BOUNDS = {
+    "Manhattan": {"lat": (40.70, 40.88), "lon": (-74.02, -73.90)},
+    "Bronx":     {"lat": (40.78, 40.92), "lon": (-73.93, -73.75)},
+    "Brooklyn":  {"lat": (40.57, 40.74), "lon": (-74.05, -73.83)},
+    "Queens":    {"lat": (40.54, 40.80), "lon": (-73.96, -73.70)},
+}
+NYC_BOUNDS = {"lat": (40.49, 40.92), "lon": (-74.26, -73.68)}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -145,7 +163,9 @@ def clean_box(raw):
     if s.startswith("l"): return "Large"
     if s.startswith("m"): return "Medium"
     if s.startswith("s"): return "Small"
-    return str(raw).strip().title()
+    if "four" in s or "4-date" in s or "4 date" in s:
+        return "Four-Date"
+    return "Unknown"
 
 
 def haversine_miles(a, b):
@@ -317,6 +337,19 @@ def save_cache(cache):
         json.dump(raw, f, indent=2)
 
 
+def validate_geocode(latlon, borough=None):
+    """
+    Check that latlon falls within the expected NYC borough bounding box.
+    Returns True if valid, False otherwise.
+    """
+    if latlon is None:
+        return False
+    lat, lon = latlon
+    bounds = BOROUGH_BOUNDS.get(borough, NYC_BOUNDS) if borough else NYC_BOUNDS
+    return (bounds["lat"][0] <= lat <= bounds["lat"][1] and
+            bounds["lon"][0] <= lon <= bounds["lon"][1])
+
+
 def make_queries(addr1, zipcode, borough):
     base = addr1.split(",")[0].strip() if "," in addr1 else addr1
     borough_map = {
@@ -344,9 +377,10 @@ def geocode_stop(geolocator, addr1, zipcode, borough, cache):
             loc = geolocator.geocode(query, timeout=10)
             if loc:
                 result = (loc.latitude, loc.longitude)
-                cache[key] = result
-                save_cache(cache)
-                return result
+                if validate_geocode(result, borough):
+                    cache[key] = result
+                    save_cache(cache)
+                    return result
         except (GeocoderTimedOut, GeocoderServiceError):
             pass
         time.sleep(1)
@@ -513,6 +547,44 @@ def build_map(ordered_stops, route_letter, route_name, opt_dist,
     m.get_root().html.add_child(folium.Element(legend_html))
 
     return m
+
+
+# ── Household clustering ─────────────────────────────────────────────────────
+
+_APT_PATTERN = re.compile(
+    r",?\s*(?:apt|unit|floor|suite|#)\s*\S*",
+    re.IGNORECASE,
+)
+
+
+def detect_household_clusters(stops):
+    """Group stops that share the same street address (ignoring apt/unit info).
+
+    Returns a dict mapping stop index (0-based) to a group letter (A, B, C, ...)
+    for groups of size >= 2.  Stops not in a cluster are omitted.
+    """
+    # Normalize: strip apt/unit/floor info, lowercase, strip whitespace
+    def _normalize(addr1):
+        cleaned = _APT_PATTERN.sub("", addr1)
+        return cleaned.strip().lower()
+
+    # Group by normalized address
+    groups = {}  # normalized_addr -> [index, ...]
+    for i, s in enumerate(stops):
+        key = _normalize(s["addr1"])
+        groups.setdefault(key, []).append(i)
+
+    # Assign letters to groups of size >= 2
+    result = {}
+    letter_idx = 0
+    for indices in groups.values():
+        if len(indices) >= 2:
+            letter = chr(ord("A") + letter_idx)
+            for idx in indices:
+                result[idx] = letter
+            letter_idx += 1
+
+    return result
 
 
 # ── Manifest CSV ──────────────────────────────────────────────────────────────

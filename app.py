@@ -10,26 +10,32 @@ from datetime import date
 
 import folium  # noqa: F401 — imported so folium map HTML renders correctly
 import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from geopy.geocoders import Nominatim
 
 from rethink_routes import (
+    BOX_COLORS,
     CACHE_FILE,
     DEPOT_BRONX_END,
     DEPOT_OTHER_END,
     DEPOT_START,
     MANIFEST_HEADERS,
+    MAX_ROUTE_MILES,
     MAX_STOPS_HARD,
     MAX_STOPS_SOFT,
     ROUTES,
+    ZIP_OVERRIDES,
     build_map,
     check_stop_limit,
     clean_box,
+    detect_household_clusters,
     geocode_stop,
     load_cache,
     optimize_route,
+    validate_geocode,
 )
 
 warnings.filterwarnings("ignore")
@@ -237,9 +243,38 @@ def parse_excel(fileobj):
     return stops, flags
 
 
-def manifest_to_csv(ordered_stops):
+def _build_summary_lines(route_info, contact, total_members):
+    """Return a list of summary-line strings for a route manifest header."""
+    if "Bronx" in route_info.get("depot_end", ""):
+        dep_end = DEPOT_BRONX_END
+    else:
+        dep_end = DEPOT_OTHER_END
+
+    bc = route_info.get("box_counts", {})
+    box_parts = [f"{sz}: {bc[sz]}" for sz in ["Large", "Medium", "Small", "Four-Date"] if bc.get(sz)]
+    box_str = " | ".join(box_parts) if box_parts else "0"
+
+    return [
+        f"Route: Route {route_info['letter']} \u2014 {route_info['name']} ({route_info['day']})",
+        f"Date: {date.today().isoformat()}",
+        f"Start: {DEPOT_START['label']} ({DEPOT_START['addr1']} {DEPOT_START['zipcode']})",
+        f"End: {dep_end['label']} ({dep_end['addr1']} {dep_end['zipcode']})",
+        f"Point of Contact: {contact}",
+        f"Total Members: {total_members}",
+        f"Boxes: {box_str}",
+    ]
+
+
+def manifest_to_csv(ordered_stops, route_info=None, contact="Oscar"):
+    """Build a CSV manifest with optional summary header rows."""
     buf = io.StringIO()
     w = csv.writer(buf)
+
+    if route_info:
+        for line in _build_summary_lines(route_info, contact, len(ordered_stops)):
+            w.writerow([line])
+        w.writerow(["---"])
+
     w.writerow(MANIFEST_HEADERS)
     for i, s in enumerate(ordered_stops, 1):
         w.writerow([
@@ -251,7 +286,7 @@ def manifest_to_csv(ordered_stops):
 
 
 def kitchen_to_csv(kitchen_rows):
-    fields = ["Route", "Total Stops", "Large", "Medium", "Small", "Unknown", "Allergen Notes"]
+    fields = ["Route", "Total Stops", "Large", "Medium", "Small", "Four-Date", "Unknown", "Allergen Notes"]
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=fields)
     w.writeheader()
@@ -263,10 +298,131 @@ def kitchen_to_csv(kitchen_rows):
             "Large":       sum(r["Large"]       for r in kitchen_rows),
             "Medium":      sum(r["Medium"]      for r in kitchen_rows),
             "Small":       sum(r["Small"]       for r in kitchen_rows),
+            "Four-Date":   sum(r.get("Four-Date", 0) for r in kitchen_rows),
             "Unknown":     sum(r["Unknown"]     for r in kitchen_rows),
             "Allergen Notes": "",
         })
     return buf.getvalue().encode("utf-8")
+
+
+# ── XLSX formatted export ────────────────────────────────────────────────────
+
+_XLSX_HEADERS = [
+    "Stop", "Member ID", "Address", "Apt/Unit", "City", "Zip",
+    "Phone", "Box Size", "Allergens", "Delivery Instructions",
+    "Available Days", "Notes", "Flag", "Household",
+]
+
+_HOUSEHOLD_FILLS = [
+    PatternFill(start_color="FFE8B0", end_color="FFE8B0", fill_type="solid"),  # light yellow
+    PatternFill(start_color="B0D4FF", end_color="B0D4FF", fill_type="solid"),  # light blue
+    PatternFill(start_color="FFB0C8", end_color="FFB0C8", fill_type="solid"),  # light pink
+    PatternFill(start_color="B0FFB0", end_color="B0FFB0", fill_type="solid"),  # light green
+    PatternFill(start_color="D4B0FF", end_color="D4B0FF", fill_type="solid"),  # light lavender
+    PatternFill(start_color="FFD4B0", end_color="FFD4B0", fill_type="solid"),  # light peach
+]
+
+
+def manifest_to_xlsx(ordered_stops, route_info, household_clusters, contact="Oscar"):
+    """Create a styled .xlsx manifest and return as io.BytesIO."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Manifest"
+
+    num_cols = len(_XLSX_HEADERS)
+
+    # -- Summary section (rows 1-8) -------------------------------------------
+    summary = _build_summary_lines(route_info, contact, len(ordered_stops))
+
+    # Row 1: Route name (bold, 14pt, merged)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=num_cols)
+    cell = ws.cell(row=1, column=1, value=summary[0].replace("Route: ", ""))
+    cell.font = Font(bold=True, size=14)
+    cell.alignment = Alignment(horizontal="left")
+
+    # Rows 2-7: remaining summary lines
+    for r_idx, line in enumerate(summary[1:], start=2):
+        ws.cell(row=r_idx, column=1, value=line)
+
+    # Row 8: blank separator (no content)
+
+    # -- Column headers (row 9) -----------------------------------------------
+    header_fill = PatternFill(start_color="2d6a4f", end_color="2d6a4f", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    HEADER_ROW = 9
+
+    for c_idx, hdr in enumerate(_XLSX_HEADERS, start=1):
+        cell = ws.cell(row=HEADER_ROW, column=c_idx, value=hdr)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    # -- Data rows (row 10+) --------------------------------------------------
+    alt_fill = PatternFill(start_color="f0f0f0", end_color="f0f0f0", fill_type="solid")
+    red_font = Font(color="FF0000")
+
+    # Map household group letters to fill indices
+    group_letters = sorted(set(household_clusters.values()))
+    group_fill_map = {
+        letter: _HOUSEHOLD_FILLS[i % len(_HOUSEHOLD_FILLS)]
+        for i, letter in enumerate(group_letters)
+    }
+
+    # Track max widths for auto-fit (start with header lengths)
+    col_widths = [len(h) for h in _XLSX_HEADERS]
+
+    DATA_START = HEADER_ROW + 1
+    for i, s in enumerate(ordered_stops):
+        row_num = DATA_START + i
+        hh_letter = household_clusters.get(i, "")
+        values = [
+            i + 1,
+            s["member_id"],
+            s["addr1"],
+            s["addr2"],
+            s["city"],
+            s["zipcode"],
+            s["phone"],
+            s["box_size"],
+            s["allergens"],
+            s["delivery_instructions"],
+            s["available_days"],
+            s["notes"],
+            s["flag"],
+            hh_letter,
+        ]
+
+        is_flagged = bool(s["flag"])
+        is_alt_row = i % 2 == 1
+        hh_fill = group_fill_map.get(hh_letter)
+
+        for c_idx, val in enumerate(values, start=1):
+            cell = ws.cell(row=row_num, column=c_idx, value=val)
+
+            # Flagged stops: red font
+            if is_flagged:
+                cell.font = red_font
+
+            # Household cluster fill takes priority, then alternating gray
+            if hh_fill:
+                cell.fill = hh_fill
+            elif is_alt_row:
+                cell.fill = alt_fill
+
+            # Update column width tracker
+            val_len = len(str(val)) if val else 0
+            if val_len > col_widths[c_idx - 1]:
+                col_widths[c_idx - 1] = val_len
+
+    # -- Auto-fit column widths -----------------------------------------------
+    for c_idx, w in enumerate(col_widths, start=1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c_idx)].width = min(w + 2, 45)
+
+    # -- Write to bytes -------------------------------------------------------
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
 
 
 # ── Route generation (runs on button click) ───────────────────────────────────
@@ -285,6 +441,17 @@ def run_generation(all_stops, all_flags):
     flags = list(all_flags)
 
     for stop in all_stops:
+        # Check zip-to-route overrides first
+        override_letter = ZIP_OVERRIDES.get(stop["zipcode"])
+        if override_letter and override_letter in route_buckets:
+            # Find the borough for the override route
+            override_borough = next(
+                (borough for letter, name, borough, day, zips in ROUTES if letter == override_letter),
+                "Queens"
+            )
+            route_buckets[override_letter].append((stop, override_borough))
+            continue
+
         matching = zip_to_routes.get(stop["zipcode"], [])
         if not matching:
             flags.append(
@@ -374,12 +541,26 @@ def run_generation(all_stops, all_flags):
             if limit_warning:
                 flags.append(f"Route {letter} ({name.replace('_',' ')}): {limit_warning}")
 
-            box_counts     = {"Large": 0, "Medium": 0, "Small": 0, "Unknown": 0}
+            # Distance cap check
+            dist_cap = st.session_state.get("distance_cap", MAX_ROUTE_MILES)
+            distance_warning = None
+            if opt_dist > dist_cap:
+                distance_warning = f"{opt_dist:.1f} miles exceeds {dist_cap:.1f} mile cap"
+                flags.append(f"Route {letter} ({name.replace('_',' ')}): {distance_warning}")
+
+            box_counts     = {"Large": 0, "Medium": 0, "Small": 0, "Four-Date": 0, "Unknown": 0}
             allergen_notes = []
             for s in ordered:
                 box_counts[s["box_size"]] = box_counts.get(s["box_size"], 0) + 1
                 if s["allergens"] and s["allergens"].lower() not in ("none", ""):
                     allergen_notes.append(f"Member {s['member_id']}: {s['allergens']}")
+
+            # Validate box counts match stop count
+            if sum(box_counts.values()) != len(ordered):
+                flags.append(
+                    f"Route {letter} ({name.replace('_',' ')}): box count mismatch — "
+                    f"{sum(box_counts.values())} boxes counted vs {len(ordered)} stops"
+                )
 
             depot_s  = {**DEPOT_START,    "latlon": depot_start_latlon}
             depot_e  = {**depot_end_info, "latlon": depot_end_latlon}
@@ -388,18 +569,19 @@ def run_generation(all_stops, all_flags):
             map_html = m._repr_html_() if m else None
 
             results.append({
-                "letter":        letter,
-                "name":          name.replace("_", " "),
-                "day":           day,
-                "borough":       borough,
-                "stops":         ordered,
-                "orig_dist":     orig_dist,
-                "opt_dist":      opt_dist,
-                "box_counts":    box_counts,
-                "map_html":      map_html,
-                "limit_warning": limit_warning,
-                "depot_start":   DEPOT_START["label"],
-                "depot_end":     depot_end_info["label"],
+                "letter":           letter,
+                "name":             name.replace("_", " "),
+                "day":              day,
+                "borough":          borough,
+                "stops":            ordered,
+                "orig_dist":        orig_dist,
+                "opt_dist":         opt_dist,
+                "box_counts":       box_counts,
+                "map_html":         map_html,
+                "limit_warning":    limit_warning,
+                "distance_warning": distance_warning,
+                "depot_start":      DEPOT_START["label"],
+                "depot_end":        depot_end_info["label"],
             })
 
             kitchen_rows.append({
@@ -408,6 +590,7 @@ def run_generation(all_stops, all_flags):
                 "Large":          box_counts.get("Large", 0),
                 "Medium":         box_counts.get("Medium", 0),
                 "Small":          box_counts.get("Small", 0),
+                "Four-Date":      box_counts.get("Four-Date", 0),
                 "Unknown":        box_counts.get("Unknown", 0),
                 "Allergen Notes": "; ".join(allergen_notes),
             })
@@ -452,6 +635,25 @@ with st.sidebar:
             st.session_state.parsed_stops = stops
             st.session_state.parsed_flags = parse_flags
             st.success(f"{len(stops)} active members found")
+
+    st.divider()
+
+    distance_cap = st.number_input(
+        "Max route distance (miles)",
+        value=MAX_ROUTE_MILES,
+        min_value=10.0,
+        max_value=60.0,
+        step=1.0,
+        help="Routes exceeding this mileage will be flagged.",
+    )
+    st.session_state["distance_cap"] = distance_cap
+
+    contact_name = st.text_input(
+        "Point of Contact",
+        value="Oscar",
+        help="Name printed on each route manifest.",
+    )
+    st.session_state["contact_name"] = contact_name
 
     st.divider()
 
@@ -537,14 +739,16 @@ total_stops = sum(r["Total Stops"] for r in kitchen_rows)
 total_L     = sum(r["Large"]       for r in kitchen_rows)
 total_M     = sum(r["Medium"]      for r in kitchen_rows)
 total_S     = sum(r["Small"]       for r in kitchen_rows)
+total_FD    = sum(r.get("Four-Date", 0) for r in kitchen_rows)
 n_flags     = len(flags)
 
-m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Total Stops",  total_stops)
-m2.metric("Large Boxes",  total_L)
-m3.metric("Medium Boxes", total_M)
-m4.metric("Small Boxes",  total_S)
-m5.metric("Flags",        n_flags,
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+m1.metric("Total Stops",    total_stops)
+m2.metric("Large Boxes",    total_L)
+m3.metric("Medium Boxes",   total_M)
+m4.metric("Small Boxes",    total_S)
+m5.metric("Four-Date Boxes", total_FD)
+m6.metric("Flags",          n_flags,
           delta=f"{n_flags} to review" if n_flags else "All clear",
           delta_color="inverse" if n_flags else "off")
 
@@ -572,9 +776,22 @@ for i, route in enumerate(results):
                 f"Start: {route['depot_start']}  →  End: {route['depot_end']}"
             )
         with right:
+            contact = st.session_state.get("contact_name", "Oscar")
+            hh_clusters = detect_household_clusters(route["stops"])
+            xlsx_bytes = manifest_to_xlsx(
+                route["stops"], route_info=route,
+                household_clusters=hh_clusters, contact=contact,
+            )
             st.download_button(
-                label="Download Manifest",
-                data=manifest_to_csv(route["stops"]),
+                label="Download Manifest (.xlsx)",
+                data=xlsx_bytes,
+                file_name=f"Route_{route['letter']}_{route['name'].replace(' ','_')}_manifest.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+            st.download_button(
+                label="Download CSV",
+                data=manifest_to_csv(route["stops"], route_info=route, contact=contact),
                 file_name=f"Route_{route['letter']}_{route['name'].replace(' ','_')}_manifest.csv",
                 mime="text/csv",
                 use_container_width=True,
@@ -588,6 +805,10 @@ for i, route in enumerate(results):
             else:
                 st.warning(f"Stop limit: {route['limit_warning']}")
 
+        # Distance cap warning
+        if route.get("distance_warning"):
+            st.warning(f"Distance cap: {route['distance_warning']}")
+
         # Map
         if route["map_html"]:
             components.html(route["map_html"], height=530, scrolling=False)
@@ -596,11 +817,12 @@ for i, route in enumerate(results):
 
         # Box summary
         bc = route["box_counts"]
-        b1, b2, b3, b4 = st.columns(4)
-        b1.metric("Large",   bc.get("Large", 0))
-        b2.metric("Medium",  bc.get("Medium", 0))
-        b3.metric("Small",   bc.get("Small", 0))
-        b4.metric("Flagged", sum(1 for s in route["stops"] if s["flag"]))
+        b1, b2, b3, b4, b5 = st.columns(5)
+        b1.metric("Large",     bc.get("Large", 0))
+        b2.metric("Medium",    bc.get("Medium", 0))
+        b3.metric("Small",     bc.get("Small", 0))
+        b4.metric("Four-Date", bc.get("Four-Date", 0))
+        b5.metric("Flagged",   sum(1 for s in route["stops"] if s["flag"]))
 
         # Manifest table (collapsible)
         with st.expander("View full stop manifest"):
@@ -615,6 +837,7 @@ for i, route in enumerate(results):
                     "Avail. Days":  s["available_days"],
                     "Notes":        s["notes"],
                     "Flag":         s["flag"],
+                    "Household":    hh_clusters.get(j - 1, ""),
                 }
                 for j, s in enumerate(route["stops"], 1)
             ]
@@ -623,9 +846,10 @@ for i, route in enumerate(results):
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "Stop":     st.column_config.NumberColumn(width="small"),
-                    "Box":      st.column_config.TextColumn(width="small"),
-                    "Flag":     st.column_config.TextColumn(width="medium"),
+                    "Stop":      st.column_config.NumberColumn(width="small"),
+                    "Box":       st.column_config.TextColumn(width="small"),
+                    "Flag":      st.column_config.TextColumn(width="medium"),
+                    "Household": st.column_config.TextColumn(width="small"),
                 },
             )
 
@@ -634,7 +858,7 @@ with tabs[len(results)]:
     st.subheader("Kitchen Packing List")
     st.caption(
         f"Total: **{total_stops} deliveries** — "
-        f"{total_L} Large / {total_M} Medium / {total_S} Small"
+        f"{total_L} Large / {total_M} Medium / {total_S} Small / {total_FD} Four-Date"
     )
 
     kitchen_df = pd.DataFrame(kitchen_rows)
@@ -644,6 +868,7 @@ with tabs[len(results)]:
         "Large":         total_L,
         "Medium":        total_M,
         "Small":         total_S,
+        "Four-Date":     total_FD,
         "Unknown":       sum(r.get("Unknown", 0) for r in kitchen_rows),
         "Allergen Notes": "",
     }])
