@@ -186,6 +186,7 @@ def parse_excel(fileobj):
 
     stops, flags = [], []
     for row in rows[1:]:
+        row = tuple(row) + (None,) * max(0, len(headers) - len(row))
         status = str(row[col["Status"]] or "").strip().lower()
         if status != "active":
             continue
