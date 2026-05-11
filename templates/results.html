@@ -1,5 +1,85 @@
 {% extends "base.html" %}
 
+{% block head %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  .route-layout {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+  .leaflet-map {
+    height: 530px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #1a1a1a;
+  }
+  .stop-list-panel {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .stop-list-header {
+    padding: 0.6rem 0.875rem;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .stop-list-body {
+    overflow-y: auto;
+    flex: 1;
+    max-height: 490px;
+  }
+  .stop-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    cursor: default;
+    font-size: 0.8rem;
+    transition: background 0.1s;
+  }
+  .stop-item:last-child { border-bottom: none; }
+  .stop-item:hover { background: #1a1a1a; }
+  .stop-item.sortable-ghost { opacity: 0.4; background: #222; }
+  .stop-item.sortable-chosen { background: #1e2e22; }
+  .drag-handle {
+    cursor: grab;
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1.4;
+    flex-shrink: 0;
+    user-select: none;
+  }
+  .drag-handle:active { cursor: grabbing; }
+  .stop-num {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    background: var(--accent);
+    color: #0e0e0e;
+    border-radius: 50%;
+    font-size: 0.65rem;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .stop-num.flagged { background: #ff5555; color: #fff; }
+  .stop-info { flex: 1; min-width: 0; }
+  .stop-addr { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stop-meta { color: var(--muted); font-size: 0.72rem; margin-top: 1px; }
+</style>
+{% endblock %}
+
 {% block sidebar %}
   <div class="sidebar-brand">
     <div class="dot"></div>
@@ -58,44 +138,28 @@
 
 <!-- Top-line metrics -->
 <div class="metric-grid">
-  <div class="metric">
-    <div class="metric-label">Total Stops</div>
-    <div class="metric-value">{{ total_stops }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Large Boxes</div>
-    <div class="metric-value">{{ total_L }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Medium Boxes</div>
-    <div class="metric-value">{{ total_M }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Small Boxes</div>
-    <div class="metric-value">{{ total_S }}</div>
-  </div>
-  <div class="metric">
-    <div class="metric-label">Four-Date</div>
-    <div class="metric-value">{{ total_FD }}</div>
-  </div>
+  <div class="metric"><div class="metric-label">Total Stops</div><div class="metric-value">{{ total_stops }}</div></div>
+  <div class="metric"><div class="metric-label">Large Boxes</div><div class="metric-value">{{ total_L }}</div></div>
+  <div class="metric"><div class="metric-label">Medium Boxes</div><div class="metric-value">{{ total_M }}</div></div>
+  <div class="metric"><div class="metric-label">Small Boxes</div><div class="metric-value">{{ total_S }}</div></div>
+  <div class="metric"><div class="metric-label">Four-Date</div><div class="metric-value">{{ total_FD }}</div></div>
   <div class="metric">
     <div class="metric-label">Flags</div>
-    <div class="metric-value" style="{% if n_flags > 0 %}color:var(--danger){% else %}color:var(--accent){% endif %}">
-      {{ n_flags }}
-    </div>
+    <div class="metric-value" style="{% if n_flags > 0 %}color:var(--danger){% else %}color:var(--accent){% endif %}">{{ n_flags }}</div>
   </div>
 </div>
 
 <!-- Tabs -->
-<div class="tab-list" id="tab-list">
+<div class="tab-list">
   {% for route in results %}
   <button class="tab-btn{% if loop.first %} active{% endif %}"
+          data-tab="tab-route-{{ route.letter }}"
           onclick="switchTab('tab-route-{{ route.letter }}', this)">
     Route {{ route.letter }}
   </button>
   {% endfor %}
-  <button class="tab-btn" onclick="switchTab('tab-kitchen', this)">Kitchen List</button>
-  <button class="tab-btn" onclick="switchTab('tab-flags', this)">
+  <button class="tab-btn" data-tab="tab-kitchen" onclick="switchTab('tab-kitchen', this)">Kitchen List</button>
+  <button class="tab-btn" data-tab="tab-flags"   onclick="switchTab('tab-flags', this)">
     Flags{% if n_flags > 0 %} ({{ n_flags }}){% endif %}
   </button>
 </div>
@@ -104,29 +168,19 @@
 {% for route in results %}
 <div class="tab-panel{% if loop.first %} active{% endif %}" id="tab-route-{{ route.letter }}">
 
-  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; margin-bottom:0.5rem;">
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; margin-bottom:0.75rem;">
     <div>
       <h2 style="font-size:1.25rem;">Route {{ route.letter }} &mdash; {{ route.name }}</h2>
       {% set saved_pct = ((route.orig_dist - route.opt_dist) / route.orig_dist * 100)|round|int if route.orig_dist > 0 else 0 %}
       <div class="route-caption">
-        {{ route.day }} &nbsp;&middot;&nbsp;
-        {{ route.stops|length }} stops &nbsp;&middot;&nbsp;
-        <strong>{{ "%.1f"|format(route.opt_dist) }} mi</strong> total (incl. depot legs) &nbsp;&middot;&nbsp;
-        saved {{ saved_pct }}%
+        {{ route.day }} &nbsp;&middot;&nbsp; {{ route.stops|length }} stops &nbsp;&middot;&nbsp;
+        <strong>{{ "%.1f"|format(route.opt_dist) }} mi</strong> (incl. depots) &nbsp;&middot;&nbsp; saved {{ saved_pct }}%
       </div>
-      <div class="route-caption">
-        Start: {{ route.depot_start }} &nbsp;&rarr;&nbsp; End: {{ route.depot_end }}
-      </div>
+      <div class="route-caption">Start: {{ route.depot_start }} &nbsp;&rarr;&nbsp; End: {{ route.depot_end }}</div>
     </div>
     <div class="download-row">
-      <a href="/download/xlsx/{{ results_id }}/{{ route.letter }}"
-         class="btn btn-outline btn-sm" style="width:auto;">
-        Download Manifest (.xlsx)
-      </a>
-      <a href="/download/csv/{{ results_id }}/{{ route.letter }}"
-         class="btn btn-ghost btn-sm" style="width:auto;">
-        Download CSV
-      </a>
+      <a href="/download/xlsx/{{ results_id }}/{{ route.letter }}" class="btn btn-outline btn-sm" style="width:auto;">Download Manifest (.xlsx)</a>
+      <a href="/download/csv/{{ results_id }}/{{ route.letter }}"  class="btn btn-ghost btn-sm"   style="width:auto;">Download CSV</a>
     </div>
   </div>
 
@@ -137,19 +191,31 @@
     <div class="alert alert-warn">Stop limit: {{ route.limit_warning }}</div>
     {% endif %}
   {% endif %}
-
   {% if route.distance_warning %}
   <div class="alert alert-warn">Distance cap: {{ route.distance_warning }}</div>
   {% endif %}
 
-  <!-- Map -->
-  {% if route.map_html %}
-  <iframe src="/map/{{ results_id }}/{{ route.letter }}"
-          style="width:100%; height:530px; border:1px solid var(--border); border-radius:8px; margin-bottom:1rem;"
-          frameborder="0" loading="lazy"></iframe>
-  {% else %}
-  <div class="alert alert-warn" style="margin-bottom:1rem;">Map unavailable — all stops in this route failed geocoding.</div>
-  {% endif %}
+  <!-- Map + stop list -->
+  <div class="route-layout">
+    <div id="map-{{ route.letter }}" class="leaflet-map"></div>
+    <div class="stop-list-panel">
+      <div class="stop-list-header">Stop order &mdash; drag to reorder</div>
+      <div class="stop-list-body">
+        <div id="stoplist-{{ route.letter }}">
+          {% for s in route.stops %}
+          <div class="stop-item" data-idx="{{ loop.index0 }}">
+            <span class="drag-handle">&#8942;</span>
+            <div class="stop-num{% if s.flag %} flagged{% endif %}">{{ loop.index }}</div>
+            <div class="stop-info">
+              <div class="stop-addr" title="{{ s.display_addr }}">{{ s.addr1 }}{% if s.addr2 %}, {{ s.addr2 }}{% endif %}</div>
+              <div class="stop-meta">{{ s.box_size }}{% if s.flag %} &nbsp;&middot;&nbsp; <span style="color:var(--danger)">⚑</span>{% endif %}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Box counts -->
   <div class="box-metrics">
@@ -157,34 +223,20 @@
     <div class="box-metric">
       <div class="metric-label">{{ label }}</div>
       <div class="metric-value">
-        {% if key == '_flagged' %}
-          {{ route.stops|selectattr('flag')|list|length }}
-        {% else %}
-          {{ route.box_counts.get(key, 0) }}
-        {% endif %}
+        {% if key == '_flagged' %}{{ route.stops|selectattr('flag')|list|length }}
+        {% else %}{{ route.box_counts.get(key, 0) }}{% endif %}
       </div>
     </div>
     {% endfor %}
   </div>
 
-  <!-- Stop manifest (collapsible) -->
+  <!-- Manifest table (collapsible) -->
   <details style="margin-top:1.25rem;">
-    <summary>View full stop manifest ({{ route.stops|length }} stops)</summary>
+    <summary>View full stop details ({{ route.stops|length }} stops)</summary>
     <div class="table-wrap">
       <table>
         <thead>
-          <tr>
-            <th>#</th>
-            <th>Member ID</th>
-            <th>Address</th>
-            <th>Phone</th>
-            <th>Box</th>
-            <th>Instructions</th>
-            <th>Avail. Days</th>
-            <th>Notes</th>
-            <th>Flag</th>
-            <th>HH</th>
-          </tr>
+          <tr><th>#</th><th>Member ID</th><th>Address</th><th>Phone</th><th>Box</th><th>Instructions</th><th>Avail. Days</th><th>Notes</th><th>Flag</th></tr>
         </thead>
         <tbody>
           {% for s in route.stops %}
@@ -198,7 +250,6 @@
             <td>{{ s.available_days }}</td>
             <td title="{{ s.notes }}">{{ s.notes[:40] }}{% if s.notes|length > 40 %}…{% endif %}</td>
             <td title="{{ s.flag }}">{{ s.flag[:35] }}{% if s.flag|length > 35 %}…{% endif %}</td>
-            <td>{{ route.household_clusters.get(loop.index0, '') }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -214,64 +265,34 @@
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.75rem;">
     <div>
       <h2 style="font-size:1.25rem; margin-bottom:0.25rem;">Kitchen Packing List</h2>
-      <div class="route-caption">
-        Total: <strong>{{ total_stops }} deliveries</strong> &mdash;
-        {{ total_L }} Large / {{ total_M }} Medium / {{ total_S }} Small / {{ total_FD }} Four-Date
-      </div>
+      <div class="route-caption">Total: <strong>{{ total_stops }} deliveries</strong> &mdash; {{ total_L }} Large / {{ total_M }} Medium / {{ total_S }} Small / {{ total_FD }} Four-Date</div>
     </div>
-    <a href="/download/kitchen/{{ results_id }}" class="btn btn-outline btn-sm" style="width:auto;">
-      Download Kitchen List (.csv)
-    </a>
+    <a href="/download/kitchen/{{ results_id }}" class="btn btn-outline btn-sm" style="width:auto;">Download Kitchen List (.csv)</a>
   </div>
-
   <div class="table-wrap">
     <table>
-      <thead>
-        <tr>
-          <th>Route</th>
-          <th>Total Stops</th>
-          <th>Large</th>
-          <th>Medium</th>
-          <th>Small</th>
-          <th>Four-Date</th>
-          <th>Unknown</th>
-          <th>Allergen Notes</th>
-        </tr>
-      </thead>
+      <thead><tr><th>Route</th><th>Total Stops</th><th>Large</th><th>Medium</th><th>Small</th><th>Four-Date</th><th>Unknown</th><th>Allergen Notes</th></tr></thead>
       <tbody>
         {% for row in kitchen_rows %}
         <tr>
-          <td>{{ row.Route }}</td>
-          <td>{{ row['Total Stops'] }}</td>
-          <td>{{ row.Large }}</td>
-          <td>{{ row.Medium }}</td>
-          <td>{{ row.Small }}</td>
-          <td>{{ row['Four-Date'] }}</td>
+          <td>{{ row.Route }}</td><td>{{ row['Total Stops'] }}</td><td>{{ row.Large }}</td>
+          <td>{{ row.Medium }}</td><td>{{ row.Small }}</td><td>{{ row['Four-Date'] }}</td>
           <td>{{ row.Unknown }}</td>
           <td title="{{ row['Allergen Notes'] }}">{{ row['Allergen Notes'][:60] }}{% if row['Allergen Notes']|length > 60 %}…{% endif %}</td>
         </tr>
         {% endfor %}
         <tr class="total-row">
-          <td>TOTAL</td>
-          <td>{{ total_stops }}</td>
-          <td>{{ total_L }}</td>
-          <td>{{ total_M }}</td>
-          <td>{{ total_S }}</td>
-          <td>{{ total_FD }}</td>
-          <td>{{ kitchen_rows|sum(attribute='Unknown') }}</td>
-          <td></td>
+          <td>TOTAL</td><td>{{ total_stops }}</td><td>{{ total_L }}</td><td>{{ total_M }}</td>
+          <td>{{ total_S }}</td><td>{{ total_FD }}</td><td>{{ kitchen_rows|sum(attribute='Unknown') }}</td><td></td>
         </tr>
       </tbody>
     </table>
   </div>
-
   {% if allergen_stops %}
   <div style="margin-top:1.5rem;">
     <h3 style="font-size:1rem; margin-bottom:0.75rem;">Allergen / Dietary Notes</h3>
     {% for s in allergen_stops %}
-    <div class="alert alert-warn" style="margin-bottom:0.4rem;">
-      Member {{ s.member_id }} &mdash; {{ s.addr1 }}: <strong>{{ s.allergens }}</strong>
-    </div>
+    <div class="alert alert-warn" style="margin-bottom:0.4rem;">Member {{ s.member_id }} &mdash; {{ s.addr1 }}: <strong>{{ s.allergens }}</strong></div>
     {% endfor %}
   </div>
   {% else %}
@@ -285,9 +306,7 @@
   {% if flags %}
   <div class="alert alert-warn" style="margin-bottom:1rem;">{{ flags|length }} item(s) require attention.</div>
   <ul style="color:var(--text); line-height:2; padding-left:1.25rem; font-size:0.875rem;">
-    {% for f in flags %}
-    <li>{{ f }}</li>
-    {% endfor %}
+    {% for f in flags %}<li>{{ f }}</li>{% endfor %}
   </ul>
   {% else %}
   <div class="alert alert-ok">No flags &mdash; all clear for delivery.</div>
@@ -297,69 +316,223 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 <script>
-  function switchTab(id, btn) {
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
-    btn.classList.add('active');
+const RESULTS_ID   = {{ results_id | tojson }};
+const ROUTE_DATA   = {{ route_map_data | tojson }};
+const initializedMaps = {};
+
+// ── Leaflet helpers ──────────────────────────────────────────────
+
+function stopIcon(num, flagged) {
+  const bg  = flagged ? '#ff5555' : '#46F694';
+  const col = flagged ? '#fff'    : '#0e0e0e';
+  return L.divIcon({
+    className: '',
+    html: `<div style="background:${bg};color:${col};border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;border:2px solid rgba(0,0,0,0.4);box-shadow:0 1px 3px rgba(0,0,0,0.5)">${num}</div>`,
+    iconSize: [24, 24], iconAnchor: [12, 12], popupAnchor: [0, -14],
+  });
+}
+
+const depotIcon = L.divIcon({
+  className: '',
+  html: `<div style="background:#fff;border-radius:4px;width:14px;height:14px;border:2px solid #46F694;box-shadow:0 1px 3px rgba(0,0,0,0.5)"></div>`,
+  iconSize: [14, 14], iconAnchor: [7, 7],
+});
+
+const routeLayers = {};   // letter → array of layers
+const routeMaps   = {};   // letter → L.Map instance
+
+function initMap(letter) {
+  if (routeMaps[letter]) return;
+  const geo = ROUTE_DATA.find(r => r.letter === letter);
+  if (!geo) return;
+
+  const map = L.map('map-' + letter, { zoomControl: true });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap © CARTO', maxZoom: 19,
+  }).addTo(map);
+
+  routeMaps[letter]   = map;
+  routeLayers[letter] = [];
+  drawRoute(letter, geo.stops);
+}
+
+function drawRoute(letter, stops) {
+  const map = routeMaps[letter];
+  const geo = ROUTE_DATA.find(r => r.letter === letter);
+  if (!map || !geo) return;
+
+  // Clear old layers
+  (routeLayers[letter] || []).forEach(l => map.removeLayer(l));
+  routeLayers[letter] = [];
+
+  const add = layer => { layer.addTo(map); routeLayers[letter].push(layer); };
+  const pts = [];
+
+  if (geo.depot_start_latlon) {
+    const m = L.marker(geo.depot_start_latlon, { icon: depotIcon });
+    m.bindPopup(`<b>Start:</b> ${geo.depot_start}`);
+    add(m); pts.push(geo.depot_start_latlon);
   }
 
-  const fileInput    = document.getElementById('file-input');
-  const uploadStatus = document.getElementById('upload-status');
-  const generateBtn  = document.getElementById('generate-btn');
-  const generateForm = document.getElementById('generate-form');
-  const overlay      = document.getElementById('loading-overlay');
-  const loadingText  = document.getElementById('loading-text');
-  let   newAddresses = 0;
+  stops.forEach((s, i) => {
+    if (!s.latlon) return;
+    const m = L.marker(s.latlon, { icon: stopIcon(i + 1, !!s.flag) });
+    m.bindPopup(`<b>${i + 1}. ${s.addr1}${s.addr2 ? ', ' + s.addr2 : ''}</b><br>${s.box_size}${s.flag ? '<br><span style="color:#ff5555">⚑ ' + s.flag + '</span>' : ''}`);
+    add(m); pts.push(s.latlon);
+  });
 
-  fileInput.addEventListener('change', async () => {
-    const file = fileInput.files[0];
-    if (!file) return;
-    uploadStatus.innerHTML = '<span style="color:var(--muted)">Reading file…</span>';
-    generateBtn.disabled = true;
-    newAddresses = 0;
+  if (geo.depot_end_latlon) {
+    const m = L.marker(geo.depot_end_latlon, { icon: depotIcon });
+    m.bindPopup(`<b>End:</b> ${geo.depot_end}`);
+    add(m); pts.push(geo.depot_end_latlon);
+  }
 
-    const fd = new FormData();
-    fd.append('file', file);
-    try {
-      const res  = await fetch('/upload', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (data.error) {
-        uploadStatus.innerHTML = '<span style="color:var(--danger)">' + data.error + '</span>';
-      } else {
-        newAddresses = data.new_count || 0;
-        const cached = data.count - newAddresses;
-        uploadStatus.innerHTML = '<span style="color:var(--accent)">' + data.count + ' active members found'
-          + (newAddresses > 0 ? ` (${newAddresses} new, ${cached} cached)` : ' (all cached)') + '</span>';
-        generateBtn.disabled = false;
-      }
-    } catch (e) {
-      uploadStatus.innerHTML = '<span style="color:var(--danger)">Upload failed — try again.</span>';
+  if (pts.length > 1) {
+    add(L.polyline(pts, { color: '#46F694', weight: 2.5, opacity: 0.75 }));
+    map.fitBounds(L.latLngBounds(pts), { padding: [28, 28] });
+  } else if (pts.length === 1) {
+    map.setView(pts[0], 13);
+  }
+}
+
+// ── Tab switching ────────────────────────────────────────────────
+
+function switchTab(id, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+
+  // Init + resize map when its tab is shown
+  const letter = id.replace('tab-route-', '');
+  if (routeMaps[letter]) {
+    routeMaps[letter].invalidateSize();
+  } else if (id.startsWith('tab-route-')) {
+    setTimeout(() => initMap(letter), 50);
+  }
+}
+
+// ── SortableJS drag-and-drop ─────────────────────────────────────
+
+function initSortable(letter) {
+  const listEl = document.getElementById('stoplist-' + letter);
+  if (!listEl) return;
+
+  Sortable.create(listEl, {
+    animation:  150,
+    handle:     '.drag-handle',
+    ghostClass: 'sortable-ghost',
+    chosenClass:'sortable-chosen',
+    onEnd: async () => {
+      const items    = [...listEl.querySelectorAll('.stop-item')];
+      const newOrder = items.map(el => parseInt(el.dataset.idx));
+
+      // Renumber bubbles
+      items.forEach((el, i) => {
+        el.querySelector('.stop-num').textContent = i + 1;
+        el.dataset.idx = i;   // keep indices sequential for future drags
+      });
+
+      // Persist to server (updates download order)
+      await fetch(`/reorder/${RESULTS_ID}/${letter}`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ order: newOrder }),
+      });
+
+      // Redraw map polyline in new order
+      const geo          = ROUTE_DATA.find(r => r.letter === letter);
+      const reorderedStops = newOrder.map(i => geo.stops[i]);
+      // Keep geo.stops in sync so subsequent redraws are correct
+      geo.stops = reorderedStops;
+      drawRoute(letter, reorderedStops);
+    },
+  });
+}
+
+// ── Boot: init first visible route ──────────────────────────────
+
+window.addEventListener('DOMContentLoaded', () => {
+  const firstTab = document.querySelector('.tab-btn.active');
+  if (firstTab) {
+    const id     = firstTab.dataset.tab;
+    const letter = id ? id.replace('tab-route-', '') : null;
+    if (letter && id.startsWith('tab-route-')) {
+      setTimeout(() => { initMap(letter); initSortable(letter); }, 80);
+    }
+  }
+
+  // Init sortables for all routes eagerly (they don't need the map)
+  {{ results | map(attribute='letter') | list | tojson }}.forEach(letter => {
+    initSortable(letter);
+  });
+});
+
+// Re-init map + sortable when a route tab is first clicked
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const id     = btn.dataset.tab || '';
+    const letter = id.replace('tab-route-', '');
+    if (id.startsWith('tab-route-') && !routeMaps[letter]) {
+      setTimeout(() => initMap(letter), 80);
     }
   });
+});
 
-  function startCountdown(newCount) {
-    const estimated = newCount * 2 + 15;
-    let remaining   = estimated;
-    loadingText.textContent = newCount > 0
-      ? `Geocoding ${newCount} new address${newCount === 1 ? '' : 'es'} + optimizing routes… (~${remaining}s)`
-      : 'Optimizing routes…';
-    if (newCount === 0) return;
-    const iv = setInterval(() => {
-      remaining--;
-      if (remaining <= 0) {
-        loadingText.textContent = 'Almost done…';
-        clearInterval(iv);
-      } else {
-        loadingText.textContent = `Geocoding ${newCount} new address${newCount === 1 ? '' : 'es'} + optimizing routes… (~${remaining}s)`;
-      }
-    }, 1000);
+// ── Upload + generate (sidebar) ──────────────────────────────────
+
+const fileInput    = document.getElementById('file-input');
+const uploadStatus = document.getElementById('upload-status');
+const generateBtn  = document.getElementById('generate-btn');
+const generateForm = document.getElementById('generate-form');
+const overlay      = document.getElementById('loading-overlay');
+const loadingText  = document.getElementById('loading-text');
+let   newAddresses = 0;
+
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  uploadStatus.innerHTML = '<span style="color:var(--muted)">Reading file…</span>';
+  generateBtn.disabled = true;
+  newAddresses = 0;
+
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res  = await fetch('/upload', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.error) {
+      uploadStatus.innerHTML = `<span style="color:var(--danger)">${data.error}</span>`;
+    } else {
+      newAddresses = data.new_count || 0;
+      const cached = data.count - newAddresses;
+      uploadStatus.innerHTML = `<span style="color:var(--accent)">${data.count} active members found${newAddresses > 0 ? ` (${newAddresses} new, ${cached} cached)` : ' (all cached)'}</span>`;
+      generateBtn.disabled = false;
+    }
+  } catch (e) {
+    uploadStatus.innerHTML = '<span style="color:var(--danger)">Upload failed — try again.</span>';
   }
+});
 
-  generateForm.addEventListener('submit', () => {
-    overlay.classList.add('show');
-    startCountdown(newAddresses);
-  });
+function startCountdown(newCount) {
+  let remaining = newCount * 2 + 15;
+  loadingText.textContent = newCount > 0
+    ? `Geocoding ${newCount} new address${newCount === 1 ? '' : 'es'} + optimizing routes… (~${remaining}s)`
+    : 'Optimizing routes…';
+  if (newCount === 0) return;
+  const iv = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) { loadingText.textContent = 'Almost done…'; clearInterval(iv); }
+    else loadingText.textContent = `Geocoding ${newCount} new address${newCount === 1 ? '' : 'es'} + optimizing routes… (~${remaining}s)`;
+  }, 1000);
+}
+
+generateForm.addEventListener('submit', () => {
+  overlay.classList.add('show');
+  startCountdown(newAddresses);
+});
 </script>
 {% endblock %}

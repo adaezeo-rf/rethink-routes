@@ -36,7 +36,6 @@ from rethink_routes import (
     MAX_STOPS_SOFT,
     ROUTES,
     ZIP_OVERRIDES,
-    build_map,
     check_stop_limit,
     clean_box,
     detect_household_clusters,
@@ -369,25 +368,21 @@ def run_generation(all_stops, all_flags, distance_cap=MAX_ROUTE_MILES, contact_n
                 f"{sum(box_counts.values())} boxes vs {len(ordered)} stops"
             )
 
-        depot_s = {**DEPOT_START,    "latlon": depot_start_latlon}
-        depot_e = {**depot_end_info, "latlon": depot_end_latlon}
-        m       = build_map(ordered, letter, name, opt_dist,
-                            day=day, depot_start=depot_s, depot_end=depot_e)
-
         results.append({
-            "letter":           letter,
-            "name":             name.replace("_", " "),
-            "day":              day,
-            "borough":          borough,
-            "stops":            ordered,
-            "orig_dist":        orig_dist,
-            "opt_dist":         opt_dist,
-            "box_counts":       box_counts,
-            "map_html":         m._repr_html_() if m else None,
-            "limit_warning":    limit_warning,
-            "distance_warning": distance_warning,
-            "depot_start":      DEPOT_START["label"],
-            "depot_end":        depot_end_info["label"],
+            "letter":            letter,
+            "name":              name.replace("_", " "),
+            "day":               day,
+            "borough":           borough,
+            "stops":             ordered,
+            "orig_dist":         orig_dist,
+            "opt_dist":          opt_dist,
+            "box_counts":        box_counts,
+            "limit_warning":     limit_warning,
+            "distance_warning":  distance_warning,
+            "depot_start":       DEPOT_START["label"],
+            "depot_end":         depot_end_info["label"],
+            "depot_start_latlon": list(depot_start_latlon),
+            "depot_end_latlon":   list(depot_end_latlon),
         })
 
         kitchen_rows.append({
@@ -518,18 +513,39 @@ def results(results_id):
     total_S     = sum(ro["Small"]       for ro in kitchen_rows)
     total_FD    = sum(ro.get("Four-Date", 0) for ro in kitchen_rows)
 
-    for route in r:
-        route["household_clusters"] = detect_household_clusters(route["stops"])
-
     allergen_stops = [
         s for route in r for s in route["stops"]
         if s["allergens"] and s["allergens"].lower() not in ("none", "")
+    ]
+
+    # Slim geo payload for Leaflet — only what JS needs
+    route_map_data = [
+        {
+            "letter":            ro["letter"],
+            "depot_start":       ro["depot_start"],
+            "depot_end":         ro["depot_end"],
+            "depot_start_latlon": ro["depot_start_latlon"],
+            "depot_end_latlon":   ro["depot_end_latlon"],
+            "stops": [
+                {
+                    "latlon":    list(s["latlon"]) if s["latlon"] else None,
+                    "addr1":     s["addr1"],
+                    "addr2":     s.get("addr2", ""),
+                    "box_size":  s["box_size"],
+                    "member_id": s["member_id"],
+                    "flag":      s.get("flag", ""),
+                }
+                for s in ro["stops"]
+            ],
+        }
+        for ro in r
     ]
 
     return render_template(
         "results.html",
         results_id=results_id,
         results=r,
+        route_map_data=route_map_data,
         kitchen_rows=kitchen_rows,
         flags=flags,
         gen_date=gen_date,
@@ -545,17 +561,22 @@ def results(results_id):
     )
 
 
-@app.route("/map/<results_id>/<letter>")
-def route_map(results_id, letter):
+@app.route("/reorder/<results_id>/<letter>", methods=["POST"])
+def reorder(results_id, letter):
     if not _authed():
-        return "Unauthorized", 401
+        return jsonify({"error": "not authenticated"}), 401
     payload = _store.get(results_id)
     if not payload:
-        return "Not found", 404
+        return jsonify({"error": "not found"}), 404
     route = next((r for r in payload["results"] if r["letter"] == letter), None)
-    if not route or not route.get("map_html"):
-        return "Map unavailable", 404
-    return route["map_html"], 200, {"Content-Type": "text/html"}
+    if not route:
+        return jsonify({"error": "route not found"}), 404
+    order = request.json.get("order", [])
+    try:
+        route["stops"] = [route["stops"][i] for i in order]
+    except IndexError:
+        return jsonify({"error": "invalid order"}), 400
+    return jsonify({"ok": True})
 
 
 @app.route("/download/xlsx/<results_id>/<letter>")
