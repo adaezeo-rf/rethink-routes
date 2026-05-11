@@ -6,6 +6,7 @@ import os
 import sys
 import uuid
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -41,6 +42,7 @@ from rethink_routes import (
     detect_household_clusters,
     geocode_stop,
     load_cache,
+    save_cache,
     optimize_route,
 )
 
@@ -271,6 +273,49 @@ def manifest_to_xlsx(ordered_stops, route_info, household_clusters, contact="Osc
     return buf
 
 
+def _geocode_all(all_stops, geocache, geolocator, zip_to_routes):
+    """Geocode stops in parallel (Google Maps) or sequentially (Nominatim fallback)."""
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY")
+
+    if api_key:
+        try:
+            import googlemaps
+            gmaps = googlemaps.Client(key=api_key)
+
+            def _google_one(stop):
+                key = (stop["addr1"], stop["zipcode"])
+                if key in geocache:
+                    return stop, geocache[key]
+                try:
+                    results = gmaps.geocode(f"{stop['addr1']}, New York, {stop['zipcode']}")
+                    latlon = None
+                    if results:
+                        loc = results[0]["geometry"]["location"]
+                        lat, lng = loc["lat"], loc["lng"]
+                        if 40.4 <= lat <= 41.0 and -74.3 <= lng <= -73.6:
+                            latlon = (lat, lng)
+                except Exception:
+                    latlon = None
+                geocache[key] = latlon
+                return stop, latlon
+
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                for stop, latlon in executor.map(_google_one, all_stops):
+                    stop["latlon"] = latlon
+
+            save_cache(geocache)
+            return
+
+        except ImportError:
+            pass  # googlemaps not installed — fall through to Nominatim
+
+    # Nominatim fallback (sequential, 1s/address)
+    for stop in all_stops:
+        matching = zip_to_routes.get(stop["zipcode"])
+        borough  = matching[0][2] if matching else "Queens"
+        stop["latlon"] = geocode_stop(geolocator, stop["addr1"], stop["zipcode"], borough, geocache)
+
+
 def run_generation(all_stops, all_flags, distance_cap=MAX_ROUTE_MILES, contact_name="Oscar"):
     """Geocode stops, optimize routes. Returns (results, kitchen_rows, flags)."""
     geocache   = load_cache()
@@ -317,12 +362,9 @@ def run_generation(all_stops, all_flags, distance_cap=MAX_ROUTE_MILES, contact_n
             "Failed to geocode depot addresses. Check internet connection and try again."
         )
 
+    _geocode_all(all_stops, geocache, geolocator, zip_to_routes)
+
     for stop in all_stops:
-        matching = zip_to_routes.get(stop["zipcode"])
-        borough  = matching[0][2] if matching else "Queens"
-        stop["latlon"] = geocode_stop(
-            geolocator, stop["addr1"], stop["zipcode"], borough, geocache
-        )
         if stop["latlon"] is None:
             flags.append(
                 f"Member {stop['member_id']} ({stop['addr1']}, {stop['zipcode']}): "
