@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rethink Food — Route Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0e0e0e; --card-bg: #111111; --border: #242424;
+      --accent: #46F694; --text: #f2f2f2; --muted: #777;
+    }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, sans-serif;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .login-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 360px;
+    }
+    .login-header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .login-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    .login-title {
+      font-size: 1.4rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      vertical-align: middle;
+    }
+    .login-sub {
+      color: var(--muted);
+      margin-top: 0.5rem;
+      font-size: 0.875rem;
+    }
+    label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+    input[type="password"] {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      color: var(--text);
+      padding: 0.6rem 0.875rem;
+      border-radius: 6px;
+      width: 100%;
+      font-family: inherit;
+      font-size: 0.875rem;
+      outline: none;
+      transition: border-color 0.15s;
+      margin-bottom: 1rem;
+    }
+    input[type="password"]:focus { border-color: var(--accent); }
+    button[type="submit"] {
+      background: var(--accent);
+      color: #0e0e0e;
+      border: none;
+      padding: 0.65rem 1rem;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.875rem;
+      font-weight: 700;
+      cursor: pointer;
+      width: 100%;
+      transition: opacity 0.15s;
+    }
+    button[type="submit"]:hover { opacity: 0.88; }
+    .error-msg {
+      background: #2a0000;
+      border: 1px solid #660000;
+      color: #ff6666;
+      border-radius: 6px;
+      padding: 0.6rem 0.875rem;
+      font-size: 0.82rem;
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-header">
+      <div>
+        <span class="login-dot"></span>
+        <span class="login-title">Rethink Food</span>
+      </div>
+      <p class="login-sub">Route Generator &mdash; Team Access</p>
+    </div>
+
+    {% if error %}
+    <div class="error-msg">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autofocus autocomplete="current-password">
+      <button type="submit">Log in</button>
+    </form>
+  </div>
+</body>
+</html>

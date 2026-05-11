@@ -1,4 +1,4 @@
-streamlit==1.55.0
+flask==3.1.0
 folium==0.20.0
 geopy==2.4.1
 openpyxl==3.1.5

@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block sidebar %}
+  <div class="sidebar-brand">
+    <div class="dot"></div>
+    <span class="name">Rethink Food</span>
+  </div>
+  <div class="sidebar-subtitle">Route Generator</div>
+
+  <hr class="divider">
+
+  <span class="sidebar-label">Upload member list (.xlsx)</span>
+  <input type="file" id="file-input" accept=".xlsx">
+  <div id="upload-status" class="sidebar-caption" style="min-height:1.2em;"></div>
+
+  <hr class="divider">
+
+  <form id="generate-form" method="post" action="/generate">
+    <span class="sidebar-label">Max route distance (miles)</span>
+    <input type="number" name="distance_cap" id="distance-cap"
+           value="{{ distance_cap }}" min="10" max="60" step="1"
+           style="margin-bottom:0.75rem;">
+
+    <span class="sidebar-label">Point of Contact</span>
+    <input type="text" name="contact_name" id="contact-name"
+           value="{{ contact_name }}" placeholder="Oscar"
+           style="margin-bottom:1rem;">
+
+    <button type="submit" class="btn btn-primary" id="generate-btn" disabled>
+      Generate Routes
+    </button>
+  </form>
+
+  <hr class="divider">
+
+  <div class="sidebar-caption">Geocode cache: <strong id="cache-count">{{ cache_count }}</strong> saved addresses</div>
+  <div class="sidebar-caption" style="margin-bottom:0.75rem;">Cached addresses are never re-geocoded.</div>
+
+  <form method="post" action="/clear-cache" style="margin-bottom:0.75rem;">
+    <button type="submit" class="btn btn-ghost btn-sm">Clear geocode cache</button>
+  </form>
+
+  <form method="post" action="/logout" style="margin-top:auto; padding-top:0.5rem;">
+    <button type="submit" class="btn btn-ghost btn-sm">Log out</button>
+  </form>
+{% endblock %}
+
+{% block main %}
+  {% if error %}
+  <div class="alert alert-error" style="margin-bottom:1.5rem;">{{ error }}</div>
+  {% endif %}
+
+  {% if parse_flags %}
+  <div class="alert alert-warn" style="margin-bottom:1.5rem;">
+    <strong>{{ parse_flags|length }} parse warning(s):</strong><br>
+    {% for f in parse_flags %}&bull; {{ f }}<br>{% endfor %}
+  </div>
+  {% endif %}
+
+  <div style="margin-bottom:2.5rem;">
+    <h1 style="font-size:2.2rem; margin-bottom:0.5rem;">Route Generator</h1>
+    <p class="text-muted" style="font-size:1rem;">
+      Upload a member list in the sidebar, then click
+      <span class="text-accent" style="font-weight:600;">Generate Routes</span>.
+    </p>
+  </div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; max-width:800px;">
+    <div class="card">
+      <div class="card-label">What you'll get</div>
+      <ul class="card-list">
+        <li>Optimized interactive map for each driver route</li>
+        <li>Downloadable stop manifest per route (.xlsx + .csv)</li>
+        <li>Kitchen packing list with box counts &amp; allergens</li>
+        <li>Flags report for anomalies to review before loading</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-label">How it works</div>
+      <ul class="card-list">
+        <li>Members assigned to 14 routes across Mon&ndash;Fri</li>
+        <li>Stops sequenced from Tribeca depot using TSP optimization</li>
+        <li>Addresses cached &mdash; subsequent weeks are much faster</li>
+        <li>Routes over 25 stops (28 if dense) flagged automatically</li>
+      </ul>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const fileInput    = document.getElementById('file-input');
+  const uploadStatus = document.getElementById('upload-status');
+  const generateBtn  = document.getElementById('generate-btn');
+  const generateForm = document.getElementById('generate-form');
+  const overlay      = document.getElementById('loading-overlay');
+
+  {% if parsed_count > 0 %}
+  uploadStatus.textContent = '{{ parsed_count }} active members loaded';
+  uploadStatus.style.color = 'var(--accent)';
+  generateBtn.disabled = false;
+  {% endif %}
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    uploadStatus.textContent = 'Reading file…';
+    uploadStatus.style.color = 'var(--muted)';
+    generateBtn.disabled = true;
+
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res  = await fetch('/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) {
+        uploadStatus.textContent = data.error;
+        uploadStatus.style.color = 'var(--danger)';
+      } else {
+        uploadStatus.textContent = data.count + ' active members found';
+        uploadStatus.style.color = 'var(--accent)';
+        generateBtn.disabled = false;
+      }
+    } catch (e) {
+      uploadStatus.textContent = 'Upload failed — try again.';
+      uploadStatus.style.color = 'var(--danger)';
+    }
+  });
+
+  generateForm.addEventListener('submit', () => {
+    overlay.classList.add('show');
+  });
+</script>
+{% endblock %}

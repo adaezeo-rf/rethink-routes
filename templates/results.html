@@ -1,0 +1,340 @@
+{% extends "base.html" %}
+
+{% block sidebar %}
+  <div class="sidebar-brand">
+    <div class="dot"></div>
+    <span class="name">Rethink Food</span>
+  </div>
+  <div class="sidebar-subtitle">Route Generator</div>
+
+  <hr class="divider">
+
+  <span class="sidebar-label">Upload member list (.xlsx)</span>
+  <input type="file" id="file-input" accept=".xlsx">
+  <div id="upload-status" class="sidebar-caption" style="min-height:1.2em;">
+    {% if parsed_count > 0 %}
+    <span style="color:var(--accent);">{{ parsed_count }} active members loaded</span>
+    {% endif %}
+  </div>
+
+  <hr class="divider">
+
+  <form id="generate-form" method="post" action="/generate">
+    <span class="sidebar-label">Max route distance (miles)</span>
+    <input type="number" name="distance_cap" id="distance-cap"
+           value="{{ distance_cap }}" min="10" max="60" step="1"
+           style="margin-bottom:0.75rem;">
+
+    <span class="sidebar-label">Point of Contact</span>
+    <input type="text" name="contact_name" id="contact-name"
+           value="{{ contact_name }}" placeholder="Oscar"
+           style="margin-bottom:1rem;">
+
+    <button type="submit" class="btn btn-primary" id="generate-btn"
+            {% if parsed_count == 0 %}disabled{% endif %}>
+      Re-generate Routes
+    </button>
+  </form>
+
+  <hr class="divider">
+
+  <form method="post" action="/new" style="margin-bottom:0.5rem;">
+    <button type="submit" class="btn btn-ghost btn-sm">New run</button>
+  </form>
+
+  <div class="sidebar-caption" style="margin-top:0.5rem;">Geocode cache: <strong>{{ cache_count }}</strong> saved addresses</div>
+
+  <form method="post" action="/clear-cache" style="margin-top:0.4rem; margin-bottom:0.75rem;">
+    <button type="submit" class="btn btn-ghost btn-sm">Clear geocode cache</button>
+  </form>
+
+  <form method="post" action="/logout" style="margin-top:auto; padding-top:0.5rem;">
+    <button type="submit" class="btn btn-ghost btn-sm">Log out</button>
+  </form>
+{% endblock %}
+
+{% block main %}
+<h1 style="font-size:1.9rem; margin-bottom:1.25rem;">Routes &mdash; Week of {{ gen_date }}</h1>
+
+<!-- Top-line metrics -->
+<div class="metric-grid">
+  <div class="metric">
+    <div class="metric-label">Total Stops</div>
+    <div class="metric-value">{{ total_stops }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Large Boxes</div>
+    <div class="metric-value">{{ total_L }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Medium Boxes</div>
+    <div class="metric-value">{{ total_M }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Small Boxes</div>
+    <div class="metric-value">{{ total_S }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Four-Date</div>
+    <div class="metric-value">{{ total_FD }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Flags</div>
+    <div class="metric-value" style="{% if n_flags > 0 %}color:var(--danger){% else %}color:var(--accent){% endif %}">
+      {{ n_flags }}
+    </div>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tab-list" id="tab-list">
+  {% for route in results %}
+  <button class="tab-btn{% if loop.first %} active{% endif %}"
+          onclick="switchTab('tab-route-{{ route.letter }}', this)">
+    Route {{ route.letter }}
+  </button>
+  {% endfor %}
+  <button class="tab-btn" onclick="switchTab('tab-kitchen', this)">Kitchen List</button>
+  <button class="tab-btn" onclick="switchTab('tab-flags', this)">
+    Flags{% if n_flags > 0 %} ({{ n_flags }}){% endif %}
+  </button>
+</div>
+
+<!-- Route tabs -->
+{% for route in results %}
+<div class="tab-panel{% if loop.first %} active{% endif %}" id="tab-route-{{ route.letter }}">
+
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap; margin-bottom:0.5rem;">
+    <div>
+      <h2 style="font-size:1.25rem;">Route {{ route.letter }} &mdash; {{ route.name }}</h2>
+      {% set saved_pct = ((route.orig_dist - route.opt_dist) / route.orig_dist * 100)|round|int if route.orig_dist > 0 else 0 %}
+      <div class="route-caption">
+        {{ route.day }} &nbsp;&middot;&nbsp;
+        {{ route.stops|length }} stops &nbsp;&middot;&nbsp;
+        <strong>{{ "%.1f"|format(route.opt_dist) }} mi</strong> total (incl. depot legs) &nbsp;&middot;&nbsp;
+        saved {{ saved_pct }}%
+      </div>
+      <div class="route-caption">
+        Start: {{ route.depot_start }} &nbsp;&rarr;&nbsp; End: {{ route.depot_end }}
+      </div>
+    </div>
+    <div class="download-row">
+      <a href="/download/xlsx/{{ results_id }}/{{ route.letter }}"
+         class="btn btn-outline btn-sm" style="width:auto;">
+        Download Manifest (.xlsx)
+      </a>
+      <a href="/download/csv/{{ results_id }}/{{ route.letter }}"
+         class="btn btn-ghost btn-sm" style="width:auto;">
+        Download CSV
+      </a>
+    </div>
+  </div>
+
+  {% if route.limit_warning %}
+    {% if route.stops|length > MAX_STOPS_SOFT %}
+    <div class="alert alert-error">Over capacity: {{ route.limit_warning }}</div>
+    {% else %}
+    <div class="alert alert-warn">Stop limit: {{ route.limit_warning }}</div>
+    {% endif %}
+  {% endif %}
+
+  {% if route.distance_warning %}
+  <div class="alert alert-warn">Distance cap: {{ route.distance_warning }}</div>
+  {% endif %}
+
+  <!-- Map -->
+  {% if route.map_html %}
+  <iframe src="/map/{{ results_id }}/{{ route.letter }}"
+          style="width:100%; height:530px; border:1px solid var(--border); border-radius:8px; margin-bottom:1rem;"
+          frameborder="0" loading="lazy"></iframe>
+  {% else %}
+  <div class="alert alert-warn" style="margin-bottom:1rem;">Map unavailable — all stops in this route failed geocoding.</div>
+  {% endif %}
+
+  <!-- Box counts -->
+  <div class="box-metrics">
+    {% for label, key in [('Large','Large'),('Medium','Medium'),('Small','Small'),('Four-Date','Four-Date'),('Flagged','_flagged')] %}
+    <div class="box-metric">
+      <div class="metric-label">{{ label }}</div>
+      <div class="metric-value">
+        {% if key == '_flagged' %}
+          {{ route.stops|selectattr('flag')|list|length }}
+        {% else %}
+          {{ route.box_counts.get(key, 0) }}
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- Stop manifest (collapsible) -->
+  <details style="margin-top:1.25rem;">
+    <summary>View full stop manifest ({{ route.stops|length }} stops)</summary>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Member ID</th>
+            <th>Address</th>
+            <th>Phone</th>
+            <th>Box</th>
+            <th>Instructions</th>
+            <th>Avail. Days</th>
+            <th>Notes</th>
+            <th>Flag</th>
+            <th>HH</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in route.stops %}
+          <tr{% if s.flag %} class="flag-row"{% endif %}>
+            <td>{{ loop.index }}</td>
+            <td>{{ s.member_id }}</td>
+            <td title="{{ s.display_addr }}">{{ s.addr1 }}{% if s.addr2 %}, {{ s.addr2 }}{% endif %}</td>
+            <td>{{ s.phone }}</td>
+            <td>{{ s.box_size }}</td>
+            <td title="{{ s.delivery_instructions }}">{{ s.delivery_instructions[:40] }}{% if s.delivery_instructions|length > 40 %}…{% endif %}</td>
+            <td>{{ s.available_days }}</td>
+            <td title="{{ s.notes }}">{{ s.notes[:40] }}{% if s.notes|length > 40 %}…{% endif %}</td>
+            <td title="{{ s.flag }}">{{ s.flag[:35] }}{% if s.flag|length > 35 %}…{% endif %}</td>
+            <td>{{ route.household_clusters.get(loop.index0, '') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+</div>
+{% endfor %}
+
+<!-- Kitchen List tab -->
+<div class="tab-panel" id="tab-kitchen">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.75rem;">
+    <div>
+      <h2 style="font-size:1.25rem; margin-bottom:0.25rem;">Kitchen Packing List</h2>
+      <div class="route-caption">
+        Total: <strong>{{ total_stops }} deliveries</strong> &mdash;
+        {{ total_L }} Large / {{ total_M }} Medium / {{ total_S }} Small / {{ total_FD }} Four-Date
+      </div>
+    </div>
+    <a href="/download/kitchen/{{ results_id }}" class="btn btn-outline btn-sm" style="width:auto;">
+      Download Kitchen List (.csv)
+    </a>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Route</th>
+          <th>Total Stops</th>
+          <th>Large</th>
+          <th>Medium</th>
+          <th>Small</th>
+          <th>Four-Date</th>
+          <th>Unknown</th>
+          <th>Allergen Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in kitchen_rows %}
+        <tr>
+          <td>{{ row.Route }}</td>
+          <td>{{ row['Total Stops'] }}</td>
+          <td>{{ row.Large }}</td>
+          <td>{{ row.Medium }}</td>
+          <td>{{ row.Small }}</td>
+          <td>{{ row['Four-Date'] }}</td>
+          <td>{{ row.Unknown }}</td>
+          <td title="{{ row['Allergen Notes'] }}">{{ row['Allergen Notes'][:60] }}{% if row['Allergen Notes']|length > 60 %}…{% endif %}</td>
+        </tr>
+        {% endfor %}
+        <tr class="total-row">
+          <td>TOTAL</td>
+          <td>{{ total_stops }}</td>
+          <td>{{ total_L }}</td>
+          <td>{{ total_M }}</td>
+          <td>{{ total_S }}</td>
+          <td>{{ total_FD }}</td>
+          <td>{{ kitchen_rows|sum(attribute='Unknown') }}</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  {% if allergen_stops %}
+  <div style="margin-top:1.5rem;">
+    <h3 style="font-size:1rem; margin-bottom:0.75rem;">Allergen / Dietary Notes</h3>
+    {% for s in allergen_stops %}
+    <div class="alert alert-warn" style="margin-bottom:0.4rem;">
+      Member {{ s.member_id }} &mdash; {{ s.addr1 }}: <strong>{{ s.allergens }}</strong>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="alert alert-ok" style="margin-top:1rem;">No dietary restrictions or allergens flagged this week.</div>
+  {% endif %}
+</div>
+
+<!-- Flags tab -->
+<div class="tab-panel" id="tab-flags">
+  <h2 style="font-size:1.25rem; margin-bottom:0.875rem;">Flags &mdash; Review Before Loading Trucks</h2>
+  {% if flags %}
+  <div class="alert alert-warn" style="margin-bottom:1rem;">{{ flags|length }} item(s) require attention.</div>
+  <ul style="color:var(--text); line-height:2; padding-left:1.25rem; font-size:0.875rem;">
+    {% for f in flags %}
+    <li>{{ f }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="alert alert-ok">No flags &mdash; all clear for delivery.</div>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function switchTab(id, btn) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    btn.classList.add('active');
+  }
+
+  const fileInput    = document.getElementById('file-input');
+  const uploadStatus = document.getElementById('upload-status');
+  const generateBtn  = document.getElementById('generate-btn');
+  const generateForm = document.getElementById('generate-form');
+  const overlay      = document.getElementById('loading-overlay');
+
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    uploadStatus.innerHTML = '<span style="color:var(--muted)">Reading file…</span>';
+    generateBtn.disabled = true;
+
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res  = await fetch('/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) {
+        uploadStatus.innerHTML = '<span style="color:var(--danger)">' + data.error + '</span>';
+      } else {
+        uploadStatus.innerHTML = '<span style="color:var(--accent)">' + data.count + ' active members found</span>';
+        generateBtn.disabled = false;
+      }
+    } catch (e) {
+      uploadStatus.innerHTML = '<span style="color:var(--danger)">Upload failed — try again.</span>';
+    }
+  });
+
+  generateForm.addEventListener('submit', () => {
+    overlay.classList.add('show');
+  });
+</script>
+{% endblock %}

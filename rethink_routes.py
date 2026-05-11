@@ -333,8 +333,11 @@ def load_cache():
 
 def save_cache(cache):
     raw = {"|||".join(k): list(v) if v else None for k, v in cache.items()}
-    with open(CACHE_FILE, "w") as f:
-        json.dump(raw, f, indent=2)
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(raw, f, indent=2)
+    except OSError:
+        pass
 
 
 def validate_geocode(latlon, borough=None):

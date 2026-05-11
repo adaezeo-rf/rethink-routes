@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rethink Food — Route Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0e0e0e;
+      --sidebar-bg:  #111111;
+      --card-bg:     #171717;
+      --border:      #242424;
+      --accent:      #46F694;
+      --text:        #f2f2f2;
+      --muted:       #777;
+      --danger:      #ff5555;
+      --warn-bg:     #2a2000;
+      --warn-border: #665500;
+      --warn-text:   #ffcc44;
+      --err-bg:      #2a0000;
+      --err-border:  #660000;
+      --err-text:    #ff6666;
+      --ok-bg:       #002a10;
+      --ok-border:   #005522;
+      --ok-text:     #46F694;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── App shell ──────────────────────────────────────────────── */
+    .app {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .sidebar {
+      width: 260px;
+      min-width: 260px;
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 1.25rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 2rem 2.5rem;
+      background: var(--bg);
+    }
+
+    /* ── Sidebar components ─────────────────────────────────────── */
+    .sidebar-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 2px;
+    }
+    .sidebar-brand .dot {
+      width: 10px;
+      height: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .sidebar-brand .name {
+      font-weight: 800;
+      font-size: 1.05rem;
+      letter-spacing: -0.01em;
+    }
+    .sidebar-subtitle {
+      color: var(--muted);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding-left: 18px;
+      margin-bottom: 1rem;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 0.875rem 0;
+    }
+
+    .sidebar-label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+      display: block;
+    }
+
+    .sidebar-caption {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 0.25rem;
+    }
+
+    /* ── Form controls ──────────────────────────────────────────── */
+    input[type="text"],
+    input[type="password"],
+    input[type="number"],
+    input[type="file"] {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      width: 100%;
+      font-family: inherit;
+      font-size: 0.875rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus,
+    input[type="password"]:focus,
+    input[type="number"]:focus {
+      border-color: var(--accent);
+    }
+    input[type="file"] {
+      padding: 0.4rem 0.5rem;
+      cursor: pointer;
+    }
+    input[type="file"]::file-selector-button {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.25rem 0.6rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.78rem;
+      margin-right: 0.5rem;
+    }
+
+    /* ── Buttons ────────────────────────────────────────────────── */
+    .btn {
+      display: inline-block;
+      padding: 0.55rem 1rem;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      text-decoration: none;
+      text-align: center;
+      transition: opacity 0.15s, background 0.15s;
+      width: 100%;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary {
+      background: var(--accent);
+      color: #0e0e0e;
+    }
+    .btn-primary:hover:not(:disabled) { opacity: 0.88; }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+    }
+    .btn-outline:hover { background: rgba(70,246,148,0.08); }
+    .btn-ghost {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.78rem;
+      padding: 0.4rem 0.75rem;
+    }
+    .btn-ghost:hover { border-color: #555; color: var(--text); }
+    .btn-sm { font-size: 0.78rem; padding: 0.35rem 0.75rem; }
+
+    /* ── Alerts ─────────────────────────────────────────────────── */
+    .alert {
+      border-radius: 6px;
+      padding: 0.65rem 0.9rem;
+      font-size: 0.82rem;
+      margin-bottom: 0.75rem;
+    }
+    .alert-warn  { background: var(--warn-bg);  border: 1px solid var(--warn-border); color: var(--warn-text); }
+    .alert-error { background: var(--err-bg);   border: 1px solid var(--err-border);  color: var(--err-text);  }
+    .alert-ok    { background: var(--ok-bg);    border: 1px solid var(--ok-border);   color: var(--ok-text);   }
+
+    /* ── Metric card ────────────────────────────────────────────── */
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .metric {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.875rem 1rem;
+    }
+    .metric-label {
+      color: var(--muted);
+      font-size: 0.67rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.3rem;
+    }
+    .metric-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    /* ── Tabs ───────────────────────────────────────────────────── */
+    .tab-list {
+      background: var(--card-bg);
+      border-radius: 8px;
+      padding: 4px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px;
+      margin-bottom: 1.5rem;
+    }
+    .tab-btn {
+      border-radius: 6px;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.8rem;
+      padding: 0.35rem 0.75rem;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+    .tab-btn.active {
+      background: var(--border);
+      color: var(--text);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── Cards ──────────────────────────────────────────────────── */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+    .card-label {
+      color: var(--accent);
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-weight: 700;
+      margin-bottom: 0.875rem;
+    }
+    .card-list {
+      color: #ccc;
+      padding-left: 1.1rem;
+      line-height: 2;
+      font-size: 0.875rem;
+    }
+
+    /* ── Tables ─────────────────────────────────────────────────── */
+    .table-wrap {
+      overflow-x: auto;
+      margin-top: 0.75rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    th {
+      background: var(--card-bg);
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    td {
+      padding: 0.45rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      max-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr.total-row td { font-weight: 700; background: var(--card-bg); }
+    tr.flag-row td  { color: var(--danger); }
+
+    /* ── Misc ───────────────────────────────────────────────────── */
+    h1 { font-weight: 800; letter-spacing: -0.03em; line-height: 1.15; }
+    h2 { font-weight: 700; letter-spacing: -0.02em; }
+    h3 { font-weight: 600; }
+
+    .text-muted  { color: var(--muted); }
+    .text-accent { color: var(--accent); }
+    .text-danger { color: var(--danger); }
+
+    .route-caption { color: var(--muted); font-size: 0.82rem; margin-top: 0.25rem; }
+
+    .download-row {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.875rem;
+      flex-wrap: wrap;
+    }
+    .download-row a { width: auto; }
+
+    .box-metrics {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+    .box-metric {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.65rem 0.875rem;
+    }
+    .box-metric .metric-label { font-size: 0.63rem; }
+    .box-metric .metric-value { font-size: 1.1rem; }
+
+    details summary { cursor: pointer; color: var(--muted); font-size: 0.82rem; margin-top: 1rem; user-select: none; }
+    details summary:hover { color: var(--text); }
+    details[open] summary { margin-bottom: 0.75rem; }
+
+    /* ── Loading overlay ────────────────────────────────────────── */
+    #loading-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(14,14,14,0.85);
+      z-index: 9999;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.25rem;
+    }
+    #loading-overlay.show { display: flex; }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { color: var(--muted); font-size: 0.875rem; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    {% block sidebar %}{% endblock %}
+  </aside>
+  <main class="main">
+    {% block main %}{% endblock %}
+  </main>
+</div>
+
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div class="loading-text">Geocoding &amp; optimizing routes…</div>
+</div>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>
