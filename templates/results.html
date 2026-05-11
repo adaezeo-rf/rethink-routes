@@ -310,12 +310,15 @@
   const generateBtn  = document.getElementById('generate-btn');
   const generateForm = document.getElementById('generate-form');
   const overlay      = document.getElementById('loading-overlay');
+  const loadingText  = document.getElementById('loading-text');
+  let   newAddresses = 0;
 
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     if (!file) return;
     uploadStatus.innerHTML = '<span style="color:var(--muted)">Reading file…</span>';
     generateBtn.disabled = true;
+    newAddresses = 0;
 
     const fd = new FormData();
     fd.append('file', file);
@@ -325,7 +328,10 @@
       if (data.error) {
         uploadStatus.innerHTML = '<span style="color:var(--danger)">' + data.error + '</span>';
       } else {
-        uploadStatus.innerHTML = '<span style="color:var(--accent)">' + data.count + ' active members found</span>';
+        newAddresses = data.new_count || 0;
+        const cached = data.count - newAddresses;
+        uploadStatus.innerHTML = '<span style="color:var(--accent)">' + data.count + ' active members found'
+          + (newAddresses > 0 ? ` (${newAddresses} new, ${cached} cached)` : ' (all cached)') + '</span>';
         generateBtn.disabled = false;
       }
     } catch (e) {
@@ -333,8 +339,27 @@
     }
   });
 
+  function startCountdown(newCount) {
+    const estimated = newCount * 2 + 15;
+    let remaining   = estimated;
+    loadingText.textContent = newCount > 0
+      ? `Geocoding ${newCount} new address${newCount === 1 ? '' : 'es'} + optimizing routes… (~${remaining}s)`
+      : 'Optimizing routes…';
+    if (newCount === 0) return;
+    const iv = setInterval(() => {
+      remaining--;
+      if (remaining <= 0) {
+        loadingText.textContent = 'Almost done…';
+        clearInterval(iv);
+      } else {
+        loadingText.textContent = `Geocoding ${newCount} new address${newCount === 1 ? '' : 'es'} + optimizing routes… (~${remaining}s)`;
+      }
+    }, 1000);
+  }
+
   generateForm.addEventListener('submit', () => {
     overlay.classList.add('show');
+    startCountdown(newAddresses);
   });
 </script>
 {% endblock %}

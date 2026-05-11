@@ -94,6 +94,8 @@
   const generateBtn  = document.getElementById('generate-btn');
   const generateForm = document.getElementById('generate-form');
   const overlay      = document.getElementById('loading-overlay');
+  const loadingText  = document.getElementById('loading-text');
+  let   newAddresses = 0;
 
   {% if parsed_count > 0 %}
   uploadStatus.textContent = '{{ parsed_count }} active members loaded';
@@ -107,6 +109,7 @@
     uploadStatus.textContent = 'Reading file…';
     uploadStatus.style.color = 'var(--muted)';
     generateBtn.disabled = true;
+    newAddresses = 0;
 
     const fd = new FormData();
     fd.append('file', file);
@@ -117,7 +120,10 @@
         uploadStatus.textContent = data.error;
         uploadStatus.style.color = 'var(--danger)';
       } else {
-        uploadStatus.textContent = data.count + ' active members found';
+        newAddresses = data.new_count || 0;
+        const cached = data.count - newAddresses;
+        uploadStatus.textContent = data.count + ' active members found'
+          + (newAddresses > 0 ? ` (${newAddresses} new, ${cached} cached)` : ' (all cached)');
         uploadStatus.style.color = 'var(--accent)';
         generateBtn.disabled = false;
       }
@@ -127,8 +133,27 @@
     }
   });
 
+  function startCountdown(newCount) {
+    const estimated = newCount * 2 + 15;
+    let remaining   = estimated;
+    loadingText.textContent = newCount > 0
+      ? `Geocoding ${newCount} new address${newCount === 1 ? '' : 'es'} + optimizing routes… (~${remaining}s)`
+      : 'Optimizing routes…';
+    if (newCount === 0) return;
+    const iv = setInterval(() => {
+      remaining--;
+      if (remaining <= 0) {
+        loadingText.textContent = 'Almost done…';
+        clearInterval(iv);
+      } else {
+        loadingText.textContent = `Geocoding ${newCount} new address${newCount === 1 ? '' : 'es'} + optimizing routes… (~${remaining}s)`;
+      }
+    }, 1000);
+  }
+
   generateForm.addEventListener('submit', () => {
     overlay.classList.add('show');
+    startCountdown(newAddresses);
   });
 </script>
 {% endblock %}

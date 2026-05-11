@@ -453,10 +453,12 @@ def upload():
     stops, flags = parse_excel(file)
     if stops is None:
         return jsonify({"error": flags[0] if flags else "Failed to parse file"}), 400
-    parse_id = str(uuid.uuid4())
-    _store[parse_id] = {"stops": stops, "flags": flags, "count": len(stops)}
+    cache     = load_cache()
+    new_count = sum(1 for s in stops if (s["addr1"], s["zipcode"]) not in cache)
+    parse_id  = str(uuid.uuid4())
+    _store[parse_id] = {"stops": stops, "flags": flags, "count": len(stops), "new_count": new_count}
     session["parse_id"] = parse_id
-    return jsonify({"count": len(stops), "flags": flags})
+    return jsonify({"count": len(stops), "flags": flags, "new_count": new_count})
 
 
 @app.route("/generate", methods=["POST"])
