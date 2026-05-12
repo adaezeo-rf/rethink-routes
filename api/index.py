@@ -28,7 +28,9 @@ from geopy.geocoders import Nominatim
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rethink_routes import (
+    ADDRESS_OVERRIDES,
     CACHE_FILE,
+    DAY_ORDER,
     DEPOT_BRONX_END,
     DEPOT_OTHER_END,
     DEPOT_START,
@@ -329,13 +331,37 @@ def run_generation(all_stops, all_flags, distance_cap=MAX_ROUTE_MILES, contact_n
     route_buckets = {letter: [] for letter, *_ in ROUTES}
     flags = list(all_flags)
 
+    # letter -> day string, built once for quick lookups
+    letter_to_day = {l: d for l, n, b, d, z in ROUTES}
+
+    # Tracks which (letter, day) each household address has already been assigned to.
+    # Key: addr1.strip().lower()
+    addr_assigned: dict[str, list[tuple]] = {}
+
+    def _day_gap(day_a: str, day_b: str) -> int:
+        return abs(DAY_ORDER.get(day_a, -99) - DAY_ORDER.get(day_b, -99))
+
+    def _spacing_ok(r_letter: str, addr_key: str) -> bool:
+        """True if route is ≥2 days from any route the same household is already on."""
+        r_day = letter_to_day.get(r_letter, "")
+        return all(_day_gap(r_day, prev_day) >= 2
+                   for _, prev_day in addr_assigned.get(addr_key, []))
+
+    def _register(r_letter: str, addr_key: str) -> None:
+        addr_assigned.setdefault(addr_key, []).append(
+            (r_letter, letter_to_day.get(r_letter, ""))
+        )
+
     for stop in all_stops:
+        addr_key = stop["addr1"].strip().lower()
+
         override_letter = ZIP_OVERRIDES.get(stop["zipcode"])
         if override_letter and override_letter in route_buckets:
             override_borough = next(
                 (b for l, n, b, d, z in ROUTES if l == override_letter), "Queens"
             )
             route_buckets[override_letter].append((stop, override_borough))
+            _register(override_letter, addr_key)
             continue
 
         matching = zip_to_routes.get(stop["zipcode"], [])
@@ -346,9 +372,26 @@ def run_generation(all_stops, all_flags, distance_cap=MAX_ROUTE_MILES, contact_n
             )
         elif len(matching) == 1:
             route_buckets[matching[0][0]].append((stop, matching[0][2]))
+            _register(matching[0][0], addr_key)
         else:
-            best = min(matching, key=lambda r: len(route_buckets[r[0]]))
+            # Prefer routes ≥2 days apart from other household members' routes.
+            existing = addr_assigned.get(addr_key, [])
+            if existing:
+                spaced = [r for r in matching if _spacing_ok(r[0], addr_key)]
+                if not spaced:
+                    existing_days = ", ".join(d for _, d in existing)
+                    flags.append(
+                        f"Member {stop['member_id']} ({stop['addr1']}): "
+                        f"double-drop warning — household already scheduled on {existing_days}, "
+                        "no route 2+ days apart available"
+                    )
+                candidates = spaced if spaced else matching
+            else:
+                candidates = matching
+
+            best = min(candidates, key=lambda r: len(route_buckets[r[0]]))
             route_buckets[best[0]].append((stop, best[2]))
+            _register(best[0], addr_key)
 
     depot_start_latlon = geocode_stop(
         geolocator, DEPOT_START["addr1"], DEPOT_START["zipcode"], DEPOT_START["borough"], geocache)
@@ -525,6 +568,7 @@ def generate():
         "flags":          flags,
         "generated_date": date.today().isoformat(),
         "contact_name":   contact_name,
+        "distance_cap":   distance_cap,
     }
     session["results_id"] = results_id
     return redirect(url_for("results", results_id=results_id))
@@ -548,6 +592,7 @@ def results(results_id):
     flags        = payload["flags"]
     gen_date     = payload["generated_date"]
     contact_name = payload["contact_name"]
+    distance_cap = payload.get("distance_cap", MAX_ROUTE_MILES)
 
     total_stops = sum(ro["Total Stops"] for ro in kitchen_rows)
     total_L     = sum(ro["Large"]       for ro in kitchen_rows)
@@ -599,7 +644,7 @@ def results(results_id):
         MAX_STOPS_SOFT=MAX_STOPS_SOFT,
         cache_count=len(cache),
         parsed_count=parsed.get("count", 0),
-        distance_cap=MAX_ROUTE_MILES,
+        distance_cap=distance_cap,
     )
 
 
@@ -619,6 +664,47 @@ def reorder(results_id, letter):
     except IndexError:
         return jsonify({"error": "invalid order"}), 400
     return jsonify({"ok": True})
+
+
+@app.route("/reassign/<results_id>", methods=["POST"])
+def reassign_stop(results_id):
+    if not _authed():
+        return jsonify({"error": "not authenticated"}), 401
+    payload = _store.get(results_id)
+    if not payload:
+        return jsonify({"error": "not found"}), 404
+
+    data        = request.json or {}
+    from_letter = data.get("from")
+    to_letter   = data.get("to")
+    stop_idx    = data.get("stop_idx")
+    to_pos      = data.get("to_pos")  # None → append
+
+    from_route = next((r for r in payload["results"] if r["letter"] == from_letter), None)
+    to_route   = next((r for r in payload["results"] if r["letter"] == to_letter),   None)
+    if not from_route or not to_route:
+        return jsonify({"error": "route not found"}), 404
+    if stop_idx is None or not (0 <= stop_idx < len(from_route["stops"])):
+        return jsonify({"error": "invalid stop index"}), 400
+
+    stop = from_route["stops"].pop(stop_idx)
+    if to_pos is None or to_pos >= len(to_route["stops"]):
+        to_route["stops"].append(stop)
+    else:
+        to_route["stops"].insert(to_pos, stop)
+
+    # Recalculate box counts for both affected routes
+    for route in (from_route, to_route):
+        bc = {"Large": 0, "Medium": 0, "Small": 0, "Four-Date": 0, "Unknown": 0}
+        for s in route["stops"]:
+            bc[s["box_size"]] = bc.get(s["box_size"], 0) + 1
+        route["box_counts"] = bc
+
+    return jsonify({
+        "ok":         True,
+        "from_count": len(from_route["stops"]),
+        "to_count":   len(to_route["stops"]),
+    })
 
 
 @app.route("/download/xlsx/<results_id>/<letter>")

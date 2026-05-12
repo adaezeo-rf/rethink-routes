@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rethink Food — Route Generator Overview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: #f4f6f4;
+    color: #1a1a1a;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* ── Tokens ── */
+  :root {
+    --green:    #1a7a4a;
+    --green-lt: #e8f5ee;
+    --bronx:    #c0392b;
+    --bronx-lt: #fdecea;
+    --bklyn:    #1a6fad;
+    --bklyn-lt: #e8f1fb;
+    --manh:     #7b2d8b;
+    --manh-lt:  #f3e8f7;
+    --queens:   #d97706;
+    --queens-lt:#fef3e2;
+    --border:   #e2e8e2;
+    --muted:    #6b7280;
+    --card:     #ffffff;
+  }
+
+  /* ── Layout ── */
+  .page { max-width: 960px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+
+  /* ── Header ── */
+  .header {
+    background: #0f2d1e;
+    border-radius: 16px;
+    padding: 2.5rem 2.5rem 2rem;
+    margin-bottom: 2rem;
+    color: white;
+  }
+  .header-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 0.75rem;
+  }
+  .logo-dot {
+    width: 14px; height: 14px;
+    background: #46F694;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .header h1 {
+    font-size: 1.75rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: white;
+  }
+  .header-sub {
+    color: #9dbfb0;
+    font-size: 0.95rem;
+    margin-bottom: 1.5rem;
+  }
+  .header-stats {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+  }
+  .stat { }
+  .stat-val {
+    font-size: 2rem;
+    font-weight: 800;
+    color: #46F694;
+    line-height: 1;
+  }
+  .stat-label {
+    font-size: 0.72rem;
+    color: #9dbfb0;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-top: 2px;
+  }
+
+  /* ── Section ── */
+  .section { margin-bottom: 2rem; }
+  .section-title {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--green);
+    margin-bottom: 1rem;
+  }
+
+  /* ── Process flow ── */
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .flow-step {
+    flex: 1;
+    padding: 1.25rem 1rem;
+    position: relative;
+    border-right: 1px solid var(--border);
+  }
+  .flow-step:last-child { border-right: none; }
+  .flow-step::after {
+    content: '›';
+    position: absolute;
+    right: -10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 1.2rem;
+    color: var(--green);
+    font-weight: 700;
+    z-index: 1;
+    background: var(--card);
+    line-height: 1;
+  }
+  .flow-step:last-child::after { display: none; }
+  .flow-icon {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+    display: block;
+  }
+  .flow-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px; height: 20px;
+    background: var(--green-lt);
+    color: var(--green);
+    border-radius: 50%;
+    font-size: 0.7rem;
+    font-weight: 800;
+    margin-bottom: 0.4rem;
+  }
+  .flow-label {
+    font-weight: 700;
+    font-size: 0.82rem;
+    margin-bottom: 0.25rem;
+    color: #111;
+  }
+  .flow-desc {
+    font-size: 0.75rem;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+
+  /* ── Route schedule ── */
+  .schedule {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+  .schedule-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    border-bottom: 2px solid var(--border);
+  }
+  .day-header {
+    padding: 0.75rem 1rem;
+    font-weight: 700;
+    font-size: 0.82rem;
+    background: #f8faf8;
+    border-right: 1px solid var(--border);
+    text-align: center;
+  }
+  .day-header:last-child { border-right: none; }
+  .day-col {
+    padding: 0.875rem 0.75rem;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    vertical-align: top;
+  }
+  .day-col:last-child { border-right: none; }
+  .route-card {
+    border-radius: 8px;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.78rem;
+  }
+  .route-letter {
+    font-weight: 800;
+    font-size: 1rem;
+    line-height: 1;
+    margin-bottom: 2px;
+  }
+  .route-name {
+    font-weight: 600;
+    font-size: 0.75rem;
+    margin-bottom: 1px;
+  }
+  .route-zips {
+    font-size: 0.65rem;
+    opacity: 0.7;
+    line-height: 1.3;
+  }
+  .bronx  { background: var(--bronx-lt);  color: var(--bronx);  }
+  .bklyn  { background: var(--bklyn-lt);  color: var(--bklyn);  }
+  .manh   { background: var(--manh-lt);   color: var(--manh);   }
+  .queens { background: var(--queens-lt); color: var(--queens); }
+
+  .schedule-footer {
+    padding: 0.875rem 1rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  /* ── Two-col cards ── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.25rem 1.5rem;
+  }
+  .card-title {
+    font-weight: 700;
+    font-size: 0.875rem;
+    margin-bottom: 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-title .icon { font-size: 1rem; }
+
+  /* ── Rule list ── */
+  .rule-list { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
+  .rule-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.82rem;
+    color: #333;
+  }
+  .rule-list li::before {
+    content: '✓';
+    color: var(--green);
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* ── Output cards ── */
+  .output-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+  .output-card {
+    background: var(--green-lt);
+    border: 1px solid #c1ddd0;
+    border-radius: 10px;
+    padding: 1rem;
+    text-align: center;
+  }
+  .output-icon { font-size: 1.75rem; margin-bottom: 0.4rem; display: block; }
+  .output-label { font-weight: 700; font-size: 0.82rem; color: var(--green); margin-bottom: 0.2rem; }
+  .output-desc { font-size: 0.72rem; color: #4a7a60; line-height: 1.35; }
+
+  /* ── Optimization diagram ── */
+  .opt-diagram {
+    background: #0f2d1e;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-top: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+  }
+  .opt-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .opt-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #9dbfb0;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    width: 80px;
+    flex-shrink: 0;
+  }
+  .opt-dots {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+  }
+  .stop-dot {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    font-weight: 800;
+    flex-shrink: 0;
+  }
+  .stop-dot.depot { background: white; color: #0f2d1e; border: 2px solid #46F694; font-size: 0.55rem; }
+  .stop-dot.stop  { background: #46F694; color: #0f2d1e; }
+  .stop-dot.stop.dim { background: #2a5a3a; color: #9dbfb0; }
+  .opt-arrow { color: #46F694; font-size: 0.75rem; flex-shrink: 0; }
+  .opt-caption { font-size: 0.72rem; color: #9dbfb0; font-style: italic; margin-top: 2px; }
+  .opt-divider { border: none; border-top: 1px solid #1e4a2e; }
+
+  /* ── Footer ── */
+  .footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.72rem;
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+  }
+
+  @media print {
+    /* Force background colors/images so borough colors & header print */
+    *, *::before, *::after { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+    body { background: white; font-size: 11px; }
+    .page { max-width: 100%; padding: 0.5rem 1rem 2rem; }
+
+    /* Hide font load — browser will fall back gracefully */
+    @import url(''); /* noop */
+
+    /* Page breaks */
+    .header   { border-radius: 6px; page-break-after: avoid; margin-bottom: 1.25rem; }
+    .section  { page-break-inside: avoid; margin-bottom: 1.25rem; }
+    /* Force a new page before the schedule table and the optimization section */
+    .section:nth-of-type(3),
+    .section:nth-of-type(4) { page-break-before: auto; }
+
+    /* Tighten spacing */
+    .header { padding: 1.5rem; }
+    .header-stats { gap: 1rem; margin-top: 1rem; }
+    .stat { padding: 0.5rem 0.875rem; }
+    .stat-num { font-size: 1.6rem; }
+
+    .section-title { font-size: 0.7rem; margin-bottom: 0.875rem; }
+
+    /* Flow cards horizontally on print */
+    .flow { gap: 0.5rem; }
+    .flow-step { padding: 0.75rem; }
+
+    /* Schedule table — keep rows together where possible */
+    .schedule-table th,
+    .schedule-table td { padding: 0.35rem 0.6rem; font-size: 0.75rem; }
+    tr { page-break-inside: avoid; }
+
+    /* Optimization diagram */
+    .opt-box { padding: 0.6rem 0.875rem; }
+
+    /* Footer */
+    .footer { margin-top: 1.5rem; padding-top: 0.75rem; font-size: 0.65rem; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-top">
+      <div class="logo-dot"></div>
+      <h1>Rethink Food — Route Generator</h1>
+    </div>
+    <p class="header-sub">How weekly meal delivery routes are planned and optimized across New York City</p>
+    <div class="header-stats">
+      <div class="stat"><div class="stat-val">14</div><div class="stat-label">Weekly Routes</div></div>
+      <div class="stat"><div class="stat-val">5</div><div class="stat-label">Delivery Days</div></div>
+      <div class="stat"><div class="stat-val">4</div><div class="stat-label">Boroughs</div></div>
+      <div class="stat"><div class="stat-val">25 mi</div><div class="stat-label">Max Route Length</div></div>
+    </div>
+  </div>
+
+  <!-- Process Flow -->
+  <div class="section">
+    <div class="section-title">How it works — end to end</div>
+    <div class="flow">
+      <div class="flow-step">
+        <span class="flow-icon">📋</span>
+        <div class="flow-num">1</div>
+        <div class="flow-label">Upload</div>
+        <div class="flow-desc">Weekly member spreadsheet uploaded. Active members extracted, issues flagged (cancellations, holds, allergens).</div>
+      </div>
+      <div class="flow-step">
+        <span class="flow-icon">🗺️</span>
+        <div class="flow-num">2</div>
+        <div class="flow-label">Assign to Routes</div>
+        <div class="flow-desc">Each member's ZIP code is matched to a borough and delivery day. Overlapping ZIPs load-balance across routes.</div>
+      </div>
+      <div class="flow-step">
+        <span class="flow-icon">📍</span>
+        <div class="flow-num">3</div>
+        <div class="flow-label">Geocode</div>
+        <div class="flow-desc">Each address is converted to GPS coordinates. Results cached — addresses seen before skip this step.</div>
+      </div>
+      <div class="flow-step">
+        <span class="flow-icon">⚡</span>
+        <div class="flow-num">4</div>
+        <div class="flow-label">Optimize Order</div>
+        <div class="flow-desc">Stops are sequenced from Tribeca depot using nearest-neighbour + 2-opt improvement to minimise total mileage.</div>
+      </div>
+      <div class="flow-step">
+        <span class="flow-icon">📄</span>
+        <div class="flow-num">5</div>
+        <div class="flow-label">Generate Outputs</div>
+        <div class="flow-desc">Driver manifest, interactive map, and kitchen packing list exported per route.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Route Schedule -->
+  <div class="section">
+    <div class="section-title">The 14 routes — by day &amp; borough</div>
+    <div class="schedule">
+      <div class="schedule-grid">
+        <div class="day-header">Monday</div>
+        <div class="day-header">Tuesday</div>
+        <div class="day-header">Wednesday</div>
+        <div class="day-header">Thursday</div>
+        <div class="day-header">Friday</div>
+      </div>
+      <div class="schedule-grid" style="border-bottom:none; align-items:start;">
+        <!-- Monday -->
+        <div class="day-col">
+          <div class="route-card bronx">
+            <div class="route-letter">A</div>
+            <div class="route-name">Bronx North</div>
+            <div class="route-zips">10463, 10466, 10467, 10469, 10475</div>
+          </div>
+          <div class="route-card bklyn">
+            <div class="route-letter">B</div>
+            <div class="route-name">Brooklyn</div>
+            <div class="route-zips">11201, 11206, 11211, 11216–11221, 11231, 11237–11238, 11249</div>
+          </div>
+          <div class="route-card manh">
+            <div class="route-letter">C</div>
+            <div class="route-name">Manhattan</div>
+            <div class="route-zips">10027, 10030–10034, 10039–10040</div>
+          </div>
+        </div>
+        <!-- Tuesday -->
+        <div class="day-col">
+          <div class="route-card bronx">
+            <div class="route-letter">D</div>
+            <div class="route-name">Bronx</div>
+            <div class="route-zips">10452, 10453, 10468</div>
+          </div>
+          <div class="route-card queens">
+            <div class="route-letter">E</div>
+            <div class="route-name">Jamaica</div>
+            <div class="route-zips">11412, 11433, 11435, 11453</div>
+          </div>
+          <div class="route-card queens">
+            <div class="route-letter">F</div>
+            <div class="route-name">Queens</div>
+            <div class="route-zips">11101, 11103, 11106, 11355–11356, 11365, 11368–11370, 11372, 11377, 11379, 11385</div>
+          </div>
+        </div>
+        <!-- Wednesday -->
+        <div class="day-col">
+          <div class="route-card bklyn">
+            <div class="route-letter">G</div>
+            <div class="route-name">Brooklyn</div>
+            <div class="route-zips">11203, 11207–11208, 11212, 11233, 11236, 11239</div>
+          </div>
+          <div class="route-card queens">
+            <div class="route-letter">H</div>
+            <div class="route-name">Jamaica &amp; Far Rockaways</div>
+            <div class="route-zips">11416–11420, 11434, 11691–11692</div>
+          </div>
+          <div class="route-card manh">
+            <div class="route-letter">I</div>
+            <div class="route-name">Manhattan</div>
+            <div class="route-zips">10001, 10011, 10023–10025, 10036</div>
+          </div>
+        </div>
+        <!-- Thursday -->
+        <div class="day-col">
+          <div class="route-card bronx">
+            <div class="route-letter">J</div>
+            <div class="route-name">Bronx</div>
+            <div class="route-zips">10451, 10454–10456</div>
+          </div>
+          <div class="route-card manh">
+            <div class="route-letter">K</div>
+            <div class="route-name">Manhattan</div>
+            <div class="route-zips">10002, 10009, 10029, 10035, 10044, 10075, 10129</div>
+          </div>
+        </div>
+        <!-- Friday -->
+        <div class="day-col">
+          <div class="route-card bronx">
+            <div class="route-letter">L</div>
+            <div class="route-name">Bronx</div>
+            <div class="route-zips">10459–10462, 10472–10473</div>
+          </div>
+          <div class="route-card bklyn">
+            <div class="route-letter">M</div>
+            <div class="route-name">Brooklyn</div>
+            <div class="route-zips">11209–11210, 11213–11214, 11219–11220, 11223–11224, 11226, 11228, 11235</div>
+          </div>
+          <div class="route-card queens">
+            <div class="route-letter">N</div>
+            <div class="route-name">Jamaica</div>
+            <div class="route-zips">11423, 11429, 11432–11436</div>
+          </div>
+        </div>
+      </div>
+      <div class="schedule-footer">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--bronx-lt);border:1.5px solid var(--bronx);"></div> Bronx (4 routes)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--bklyn-lt);border:1.5px solid var(--bklyn);"></div> Brooklyn (3 routes)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--manh-lt);border:1.5px solid var(--manh);"></div> Manhattan (3 routes)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--queens-lt);border:1.5px solid var(--queens);"></div> Queens (4 routes)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Optimization + Rules -->
+  <div class="section two-col">
+
+    <div class="card">
+      <div class="card-title"><span class="icon">⚡</span> Route Optimisation</div>
+      <div class="opt-diagram">
+        <div class="opt-row">
+          <div class="opt-label">Input</div>
+          <div class="opt-dots">
+            <div class="stop-dot depot">▲</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop dim">5</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop dim">2</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop dim">8</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop dim">1</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot depot">■</div>
+          </div>
+        </div>
+        <div class="opt-caption">Unordered stops from spreadsheet</div>
+        <hr class="opt-divider">
+        <div class="opt-row">
+          <div class="opt-label">Step 1</div>
+          <div class="opt-dots">
+            <div class="stop-dot depot">▲</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop">1</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop">2</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop">5</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop">8</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot depot">■</div>
+          </div>
+        </div>
+        <div class="opt-caption">Nearest-neighbour: always go to the closest unvisited stop</div>
+        <hr class="opt-divider">
+        <div class="opt-row">
+          <div class="opt-label">Step 2</div>
+          <div class="opt-dots">
+            <div class="stop-dot depot">▲</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop">1</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop">5</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop">8</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot stop">2</div>
+            <div class="opt-arrow">→</div>
+            <div class="stop-dot depot">■</div>
+          </div>
+        </div>
+        <div class="opt-caption">2-opt improvement: swap segments to remove crossing paths</div>
+      </div>
+      <div style="margin-top:0.875rem; font-size:0.75rem; color:var(--muted);">
+        ▲ Start depot: Tribeca Rooftop, 10 Desbrosses St<br>
+        ■ End depot: Bronx or Brooklyn (by borough)
+      </div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:1rem;">
+      <div class="card">
+        <div class="card-title"><span class="icon">📏</span> Route Rules</div>
+        <ul class="rule-list">
+          <li>Max <strong>25 stops</strong> per route (28 if stops are tightly clustered)</li>
+          <li>Max <strong>25 miles</strong> per route including depot legs</li>
+          <li>ZIP codes in two routes: assigned to the route with <strong>fewer stops</strong> (load-balancing)</li>
+          <li>Ridgewood (11385) always assigned to Brooklyn Route B — better parking access near depot</li>
+          <li>Members with allergens, cancel/hold notes, or failed geocodes are <strong>flagged for review</strong></li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="icon">⚡</span> Performance</div>
+        <ul class="rule-list">
+          <li>Addresses cached after first geocode — repeat weeks are near-instant</li>
+          <li>Parallel geocoding: up to 10 addresses processed simultaneously</li>
+          <li>Typical run time: <strong>&lt; 30 seconds</strong> for a fully-cached spreadsheet</li>
+          <li>New addresses add ~2–3 seconds each</li>
+        </ul>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Outputs -->
+  <div class="section">
+    <div class="section-title">What gets generated</div>
+    <div class="output-grid">
+      <div class="output-card">
+        <span class="output-icon">🗺️</span>
+        <div class="output-label">Interactive Route Map</div>
+        <div class="output-desc">Numbered stop markers on a live map. Drag to reorder stops — route line updates in real time.</div>
+      </div>
+      <div class="output-card">
+        <span class="output-icon">📋</span>
+        <div class="output-label">Driver Manifest (.xlsx)</div>
+        <div class="output-desc">Formatted spreadsheet with stop order, addresses, box sizes, allergens, and household colour-coding.</div>
+      </div>
+      <div class="output-card">
+        <span class="output-icon">📦</span>
+        <div class="output-label">Kitchen Packing List</div>
+        <div class="output-desc">Per-route box counts (Large / Medium / Small / Four-Date) plus allergen notes for kitchen prep.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Rethink Food &mdash; Route Generator &nbsp;&middot;&nbsp; Internal Operations Tool
+  </div>
+
+</div>
+</body>
+</html>

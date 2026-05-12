@@ -144,6 +144,20 @@ ZIP_OVERRIDES = {
     "11385": "B",  # Ridgewood — better with Brooklyn route (near parking lot)
 }
 
+# Hard-coded lat/lon overrides for addresses the geocoder gets wrong.
+# Key: (addr1.strip().lower(), zipcode)  Value: (lat, lon)
+# Add entries here when a geocoding error is confirmed; no API call is made for these.
+ADDRESS_OVERRIDES: dict[tuple, tuple] = {
+    # "1 River Place" geocodes to Yonkers — hard-coded to the correct NYC location.
+    # Verify coordinates and update zipcode if needed.
+    # ("1 river place", "10036"): (40.7589, -74.0023),
+}
+
+# Day ordering used for double-drop spacing checks
+DAY_ORDER = {
+    "Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3, "Friday": 4,
+}
+
 # ── Borough bounding boxes for geocode validation ────────────────────────────
 
 BOROUGH_BOUNDS = {
@@ -374,6 +388,12 @@ def geocode_stop(geolocator, addr1, zipcode, borough, cache):
     key = (addr1, zipcode)
     if key in cache:
         return cache[key]
+
+    override = ADDRESS_OVERRIDES.get((addr1.strip().lower(), zipcode))
+    if override:
+        cache[key] = override
+        save_cache(cache)
+        return override
 
     for query in make_queries(addr1, zipcode, borough):
         try:
