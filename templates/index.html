@@ -121,9 +121,12 @@
         uploadStatus.style.color = 'var(--danger)';
       } else {
         newAddresses = data.new_count || 0;
-        const cached = data.count - newAddresses;
-        uploadStatus.textContent = data.count + ' active members found'
-          + (newAddresses > 0 ? ` (${newAddresses} new, ${cached} cached)` : ' (all cached)');
+        const cached  = data.count - newAddresses;
+        const twice   = data.twice_count || 0;
+        const stopLbl = twice > 0 ? ` · ${twice} twice-weekly (+${twice} stops)` : '';
+        uploadStatus.textContent = data.count + ' stops total'
+          + stopLbl
+          + (newAddresses > 0 ? ` · ${newAddresses} new addresses, ${cached} cached` : ' · all addresses cached');
         uploadStatus.style.color = 'var(--accent)';
         generateBtn.disabled = false;
       }

@@ -134,7 +134,7 @@ BOX_COLORS = {
     "Large":     "#e74c3c",
     "Medium":    "#e67e22",
     "Small":     "#2980b9",
-    "Four-Date": "#8e44ad",
+    "Four-Day": "#8e44ad",
     "Unknown":   "#7f8c8d",
 }
 
@@ -177,8 +177,10 @@ def clean_box(raw):
     if s.startswith("l"): return "Large"
     if s.startswith("m"): return "Medium"
     if s.startswith("s"): return "Small"
-    if "four" in s or "4-date" in s or "4 date" in s:
-        return "Four-Date"
+    # Matches: "4-Day", "4 Day", "4day", "Four-Day", "Four Day",
+    #          "Four-Day", "4-Date", "4 Date" (legacy alias)
+    if "four" in s or re.search(r"4.?da", s):
+        return "Four-Day"
     return "Unknown"
 
 
@@ -615,7 +617,7 @@ def detect_household_clusters(stops):
 MANIFEST_HEADERS = [
     "Stop", "Member ID", "Address", "Apt/Unit", "City", "Zip",
     "Phone", "Box Size", "Allergens", "Delivery Instructions",
-    "Available Days", "Notes", "Flag",
+    "Available Days", "Notes", "Delivery", "Flag",
 ]
 
 

@@ -169,7 +169,7 @@
   <div class="metric"><div class="metric-label">Large Boxes</div><div class="metric-value">{{ total_L }}</div></div>
   <div class="metric"><div class="metric-label">Medium Boxes</div><div class="metric-value">{{ total_M }}</div></div>
   <div class="metric"><div class="metric-label">Small Boxes</div><div class="metric-value">{{ total_S }}</div></div>
-  <div class="metric"><div class="metric-label">Four-Date</div><div class="metric-value">{{ total_FD }}</div></div>
+  <div class="metric"><div class="metric-label">Four-Day</div><div class="metric-value">{{ total_FD }}</div></div>
   <div class="metric">
     <div class="metric-label">Flags</div>
     <div class="metric-value" style="{% if n_flags > 0 %}color:var(--danger){% else %}color:var(--accent){% endif %}">{{ n_flags }}</div>
@@ -186,6 +186,9 @@
   </button>
   {% endfor %}
   <button class="tab-btn" data-tab="tab-kitchen" onclick="switchTab('tab-kitchen', this)">Kitchen List</button>
+  <button class="tab-btn" data-tab="tab-doubles" onclick="switchTab('tab-doubles', this)">
+    Double Deliveries{% if double_deliveries|length > 0 %} ({{ double_deliveries|length }}){% endif %}
+  </button>
   <button class="tab-btn" data-tab="tab-flags"   onclick="switchTab('tab-flags', this)">
     Flags{% if n_flags > 0 %} ({{ n_flags }}){% endif %}
   </button>
@@ -254,7 +257,7 @@
 
   <!-- Box counts -->
   <div class="box-metrics">
-    {% for label, key in [('Large','Large'),('Medium','Medium'),('Small','Small'),('Four-Date','Four-Date'),('Flagged','_flagged')] %}
+    {% for label, key in [('Large','Large'),('Medium','Medium'),('Small','Small'),('Four-Day','Four-Day'),('Flagged','_flagged')] %}
     <div class="box-metric">
       <div class="metric-label">{{ label }}</div>
       <div class="metric-value">
@@ -300,18 +303,18 @@
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.75rem;">
     <div>
       <h2 style="font-size:1.25rem; margin-bottom:0.25rem;">Kitchen Packing List</h2>
-      <div class="route-caption">Total: <strong>{{ total_stops }} deliveries</strong> &mdash; {{ total_L }} Large / {{ total_M }} Medium / {{ total_S }} Small / {{ total_FD }} Four-Date</div>
+      <div class="route-caption">Total: <strong>{{ total_stops }} deliveries</strong> &mdash; {{ total_L }} Large / {{ total_M }} Medium / {{ total_S }} Small / {{ total_FD }} Four-Day</div>
     </div>
     <a href="/download/kitchen/{{ results_id }}" class="btn btn-outline btn-sm" style="width:auto;">Download Kitchen List (.csv)</a>
   </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Route</th><th>Total Stops</th><th>Large</th><th>Medium</th><th>Small</th><th>Four-Date</th><th>Unknown</th><th>Allergen Notes</th></tr></thead>
+      <thead><tr><th>Route</th><th>Total Stops</th><th>Large</th><th>Medium</th><th>Small</th><th>Four-Day</th><th>Unknown</th><th>Allergen Notes</th></tr></thead>
       <tbody>
         {% for row in kitchen_rows %}
         <tr>
           <td>{{ row.Route }}</td><td>{{ row['Total Stops'] }}</td><td>{{ row.Large }}</td>
-          <td>{{ row.Medium }}</td><td>{{ row.Small }}</td><td>{{ row['Four-Date'] }}</td>
+          <td>{{ row.Medium }}</td><td>{{ row.Small }}</td><td>{{ row['Four-Day'] }}</td>
           <td>{{ row.Unknown }}</td>
           <td title="{{ row['Allergen Notes'] }}">{{ row['Allergen Notes'][:60] }}{% if row['Allergen Notes']|length > 60 %}…{% endif %}</td>
         </tr>
@@ -332,6 +335,42 @@
   </div>
   {% else %}
   <div class="alert alert-ok" style="margin-top:1rem;">No dietary restrictions or allergens flagged this week.</div>
+  {% endif %}
+</div>
+
+<!-- Double Deliveries tab -->
+<div class="tab-panel" id="tab-doubles">
+  <h2 style="font-size:1.25rem; margin-bottom:0.5rem;">Double Deliveries</h2>
+  {% if double_deliveries %}
+  <div class="alert alert-ok" style="margin-bottom:1rem;">
+    {{ double_deliveries|length }} member{{ 's' if double_deliveries|length != 1 }} receiving 2 deliveries this week.
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Member ID</th>
+          <th>Address</th>
+          <th>First Delivery</th>
+          <th>Second Delivery</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dd in double_deliveries %}
+        {% set first  = dd.deliveries | selectattr("delivery_type","equalto","First Delivery")  | list | first | default(None) %}
+        {% set second = dd.deliveries | selectattr("delivery_type","equalto","Second Delivery") | list | first | default(None) %}
+        <tr>
+          <td>{{ dd.member_id }}</td>
+          <td title="{{ dd.display_addr }}">{{ dd.display_addr[:55] }}{% if dd.display_addr|length > 55 %}…{% endif %}</td>
+          <td>{% if first  %}Route {{ first.route_letter  }} — {{ first.day  }}{% else %}<span style="color:var(--danger)">Not placed</span>{% endif %}</td>
+          <td>{% if second %}Route {{ second.route_letter }} — {{ second.day }}{% else %}<span style="color:var(--danger)">Not placed</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="alert alert-ok" style="margin-top:1rem;">No twice-weekly members this run — every stop appears exactly once.</div>
   {% endif %}
 </div>
 

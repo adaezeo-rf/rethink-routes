@@ -86,6 +86,11 @@ def parse_excel(fileobj):
     if missing:
         return None, [f"Missing columns in spreadsheet: {missing}"]
 
+    # Case-insensitive lookup for optional columns
+    _col_lower = {k.lower(): k for k in col}
+    twice_col  = _col_lower.get("twice delivery")   # "Yes"/"No"
+    route_col  = _col_lower.get("route")            # single letter, e.g. "A"
+
     stops, flags = [], []
     for row in rows[1:]:
         row = tuple(row) + (None,) * max(0, len(headers) - len(row))
@@ -121,8 +126,11 @@ def parse_excel(fileobj):
         if allergens and allergens.lower() not in ("none", ""):
             flag = (flag + " | " if flag else "") + f"Allergen: {allergens}"
 
-        member_id = str(row[col["Member ID"]] or "").replace(".0", "")
-        stops.append({
+        member_id      = str(row[col["Member ID"]] or "").replace(".0", "")
+        twice_delivery = twice_col and str(row[col[twice_col]] or "").strip().lower() == "yes"
+        assigned_route = str(row[col[route_col]] or "").strip().upper() if route_col else ""
+
+        base_stop = {
             "member_id":             member_id,
             "addr1":                 addr1,
             "addr2":                 addr2,
@@ -138,7 +146,20 @@ def parse_excel(fileobj):
             "notes":                 notes_raw,
             "flag":                  flag,
             "latlon":                None,
-        })
+            "delivery_type":         "",          # "First Delivery" | "Second Delivery" | ""
+            "assigned_route":        assigned_route,
+        }
+
+        if twice_delivery:
+            # First delivery: honour any manual route assignment
+            stops.append({**base_stop, "delivery_type": "First Delivery"})
+            # Second delivery: auto-assign (blank assigned_route so spacing logic runs)
+            stops.append({**base_stop, "delivery_type": "Second Delivery",
+                          "assigned_route": ""})
+        else:
+            stops.append(base_stop)
+
+        # Add flag once per member regardless of delivery count
         if flag:
             flags.append(f"Member {member_id} ({display_addr}): {flag}")
 
@@ -148,7 +169,7 @@ def parse_excel(fileobj):
 def _build_summary_lines(route_info, contact, total_members):
     dep_end = DEPOT_BRONX_END if "Bronx" in route_info.get("depot_end", "") else DEPOT_OTHER_END
     bc = route_info.get("box_counts", {})
-    box_parts = [f"{sz}: {bc[sz]}" for sz in ["Large", "Medium", "Small", "Four-Date"] if bc.get(sz)]
+    box_parts = [f"{sz}: {bc[sz]}" for sz in ["Large", "Medium", "Small", "Four-Day"] if bc.get(sz)]
     return [
         f"Route: Route {route_info['letter']} — {route_info['name']} ({route_info['day']})",
         f"Date: {date.today().isoformat()}",
@@ -172,13 +193,13 @@ def manifest_to_csv(ordered_stops, route_info=None, contact="Oscar"):
         w.writerow([
             i, s["member_id"], s["addr1"], s["addr2"], s["city"], s["zipcode"],
             s["phone"], s["box_size"], s["allergens"], s["delivery_instructions"],
-            s["available_days"], s["notes"], s["flag"],
+            s["available_days"], s["notes"], s.get("delivery_type", ""), s["flag"],
         ])
     return buf.getvalue().encode("utf-8")
 
 
 def kitchen_to_csv(kitchen_rows):
-    fields = ["Route", "Total Stops", "Large", "Medium", "Small", "Four-Date", "Unknown", "Allergen Notes"]
+    fields = ["Route", "Total Stops", "Large", "Medium", "Small", "Four-Day", "Unknown", "Allergen Notes"]
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=fields)
     w.writeheader()
@@ -190,7 +211,7 @@ def kitchen_to_csv(kitchen_rows):
             "Large":         sum(r["Large"] for r in kitchen_rows),
             "Medium":        sum(r["Medium"] for r in kitchen_rows),
             "Small":         sum(r["Small"] for r in kitchen_rows),
-            "Four-Date":     sum(r.get("Four-Date", 0) for r in kitchen_rows),
+            "Four-Day":     sum(r.get("Four-Day", 0) for r in kitchen_rows),
             "Unknown":       sum(r["Unknown"] for r in kitchen_rows),
             "Allergen Notes": "",
         })
@@ -200,7 +221,7 @@ def kitchen_to_csv(kitchen_rows):
 _XLSX_HEADERS = [
     "Stop", "Member ID", "Address", "Apt/Unit", "City", "Zip",
     "Phone", "Box Size", "Allergens", "Delivery Instructions",
-    "Available Days", "Notes", "Flag", "Household",
+    "Available Days", "Notes", "Delivery", "Flag", "Household",
 ]
 
 _HOUSEHOLD_FILLS = [
@@ -251,7 +272,7 @@ def manifest_to_xlsx(ordered_stops, route_info, household_clusters, contact="Osc
             i + 1, s["member_id"], s["addr1"], s["addr2"], s["city"],
             s["zipcode"], s["phone"], s["box_size"], s["allergens"],
             s["delivery_instructions"], s["available_days"], s["notes"],
-            s["flag"], hh_letter,
+            s.get("delivery_type", ""), s["flag"], hh_letter,
         ]
         hh_fill = group_fill_map.get(hh_letter)
         for c_idx, val in enumerate(values, start=1):
@@ -355,6 +376,15 @@ def run_generation(all_stops, all_flags, distance_cap=MAX_ROUTE_MILES, contact_n
     for stop in all_stops:
         addr_key = stop["addr1"].strip().lower()
 
+        # Spreadsheet-level route assignment takes top priority
+        if stop.get("assigned_route") in route_buckets:
+            assigned_borough = next(
+                (b for l, n, b, d, z in ROUTES if l == stop["assigned_route"]), "Queens"
+            )
+            route_buckets[stop["assigned_route"]].append((stop, assigned_borough))
+            _register(stop["assigned_route"], addr_key)
+            continue
+
         override_letter = ZIP_OVERRIDES.get(stop["zipcode"])
         if override_letter and override_letter in route_buckets:
             override_borough = next(
@@ -440,7 +470,7 @@ def run_generation(all_stops, all_flags, distance_cap=MAX_ROUTE_MILES, contact_n
             distance_warning = f"{opt_dist:.1f} miles exceeds {distance_cap:.1f} mile cap"
             flags.append(f"Route {letter} ({name.replace('_', ' ')}): {distance_warning}")
 
-        box_counts     = {"Large": 0, "Medium": 0, "Small": 0, "Four-Date": 0, "Unknown": 0}
+        box_counts     = {"Large": 0, "Medium": 0, "Small": 0, "Four-Day": 0, "Unknown": 0}
         allergen_notes = []
         for s in ordered:
             box_counts[s["box_size"]] = box_counts.get(s["box_size"], 0) + 1
@@ -476,12 +506,40 @@ def run_generation(all_stops, all_flags, distance_cap=MAX_ROUTE_MILES, contact_n
             "Large":          box_counts.get("Large", 0),
             "Medium":         box_counts.get("Medium", 0),
             "Small":          box_counts.get("Small", 0),
-            "Four-Date":      box_counts.get("Four-Date", 0),
+            "Four-Day":      box_counts.get("Four-Day", 0),
             "Unknown":        box_counts.get("Unknown", 0),
             "Allergen Notes": "; ".join(allergen_notes),
         })
 
-    return results, kitchen_rows, flags
+    # Build double-delivery summary (members appearing in two routes)
+    seen_twice: dict[str, list] = {}
+    for ro in results:
+        for s in ro["stops"]:
+            if s.get("delivery_type"):
+                seen_twice.setdefault(s["member_id"], []).append({
+                    "route_letter": ro["letter"],
+                    "route_name":   ro["name"],
+                    "day":          ro["day"],
+                    "delivery_type": s["delivery_type"],
+                    "addr1":         s["addr1"],
+                    "display_addr":  s.get("display_addr", s["addr1"]),
+                })
+
+    double_deliveries = []
+    for mid, deliveries in seen_twice.items():
+        deliveries.sort(key=lambda d: d["delivery_type"])  # First before Second
+        double_deliveries.append({
+            "member_id":    mid,
+            "display_addr": deliveries[0]["display_addr"],
+            "deliveries":   deliveries,
+        })
+        if not any(d["delivery_type"] == "Second Delivery" for d in deliveries):
+            flags.append(
+                f"Member {mid} ({deliveries[0]['addr1']}): marked twice-weekly but "
+                "second delivery was not placed — check ZIP coverage"
+            )
+
+    return results, kitchen_rows, flags, double_deliveries
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -533,12 +591,15 @@ def upload():
     stops, flags = parse_excel(file)
     if stops is None:
         return jsonify({"error": flags[0] if flags else "Failed to parse file"}), 400
-    cache     = load_cache()
-    new_count = sum(1 for s in stops if (s["addr1"], s["zipcode"]) not in cache)
-    parse_id  = str(uuid.uuid4())
-    _store[parse_id] = {"stops": stops, "flags": flags, "count": len(stops), "new_count": new_count}
+    cache       = load_cache()
+    new_count   = sum(1 for s in stops if (s["addr1"], s["zipcode"]) not in cache)
+    twice_count = sum(1 for s in stops if s.get("delivery_type") == "Second Delivery")
+    parse_id    = str(uuid.uuid4())
+    _store[parse_id] = {"stops": stops, "flags": flags, "count": len(stops),
+                        "new_count": new_count, "twice_count": twice_count}
     session["parse_id"] = parse_id
-    return jsonify({"count": len(stops), "flags": flags, "new_count": new_count})
+    return jsonify({"count": len(stops), "flags": flags,
+                    "new_count": new_count, "twice_count": twice_count})
 
 
 @app.route("/generate", methods=["POST"])
@@ -554,7 +615,7 @@ def generate():
     contact_name = request.form.get("contact_name", "Oscar").strip() or "Oscar"
 
     try:
-        results, kitchen_rows, flags = run_generation(
+        results, kitchen_rows, flags, double_deliveries = run_generation(
             parsed["stops"], parsed["flags"], distance_cap, contact_name
         )
     except RuntimeError as e:
@@ -563,12 +624,13 @@ def generate():
 
     results_id = str(uuid.uuid4())
     _store[results_id] = {
-        "results":        results,
-        "kitchen_rows":   kitchen_rows,
-        "flags":          flags,
-        "generated_date": date.today().isoformat(),
-        "contact_name":   contact_name,
-        "distance_cap":   distance_cap,
+        "results":            results,
+        "kitchen_rows":       kitchen_rows,
+        "flags":              flags,
+        "double_deliveries":  double_deliveries,
+        "generated_date":     date.today().isoformat(),
+        "contact_name":       contact_name,
+        "distance_cap":       distance_cap,
     }
     session["results_id"] = results_id
     return redirect(url_for("results", results_id=results_id))
@@ -587,18 +649,19 @@ def results(results_id):
     parse_id = session.get("parse_id")
     parsed   = _store.get(parse_id, {}) if parse_id else {}
 
-    r            = payload["results"]
-    kitchen_rows = payload["kitchen_rows"]
-    flags        = payload["flags"]
-    gen_date     = payload["generated_date"]
-    contact_name = payload["contact_name"]
-    distance_cap = payload.get("distance_cap", MAX_ROUTE_MILES)
+    r                 = payload["results"]
+    kitchen_rows      = payload["kitchen_rows"]
+    flags             = payload["flags"]
+    double_deliveries = payload.get("double_deliveries", [])
+    gen_date          = payload["generated_date"]
+    contact_name      = payload["contact_name"]
+    distance_cap      = payload.get("distance_cap", MAX_ROUTE_MILES)
 
     total_stops = sum(ro["Total Stops"] for ro in kitchen_rows)
     total_L     = sum(ro["Large"]       for ro in kitchen_rows)
     total_M     = sum(ro["Medium"]      for ro in kitchen_rows)
     total_S     = sum(ro["Small"]       for ro in kitchen_rows)
-    total_FD    = sum(ro.get("Four-Date", 0) for ro in kitchen_rows)
+    total_FD    = sum(ro.get("Four-Day", 0) for ro in kitchen_rows)
 
     allergen_stops = [
         s for route in r for s in route["stops"]
@@ -645,6 +708,7 @@ def results(results_id):
         cache_count=len(cache),
         parsed_count=parsed.get("count", 0),
         distance_cap=distance_cap,
+        double_deliveries=double_deliveries,
     )
 
 
@@ -695,7 +759,7 @@ def reassign_stop(results_id):
 
     # Recalculate box counts for both affected routes
     for route in (from_route, to_route):
-        bc = {"Large": 0, "Medium": 0, "Small": 0, "Four-Date": 0, "Unknown": 0}
+        bc = {"Large": 0, "Medium": 0, "Small": 0, "Four-Day": 0, "Unknown": 0}
         for s in route["stops"]:
             bc[s["box_size"]] = bc.get(s["box_size"], 0) + 1
         route["box_counts"] = bc
