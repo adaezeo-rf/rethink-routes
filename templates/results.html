@@ -161,7 +161,12 @@
   <span>Results are stored in memory and will be lost if the server restarts. Download manifests to keep a permanent copy.</span>
   <button onclick="this.parentElement.style.display='none'" style="background:none;border:none;color:#8888cc;cursor:pointer;font-size:1rem;padding:0 0.25rem;line-height:1;">&times;</button>
 </div>
-<h1 style="font-size:1.9rem; margin-bottom:1.25rem;">Routes &mdash; Week of {{ gen_date }}</h1>
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem; flex-wrap:wrap; gap:0.75rem;">
+  <h1 style="font-size:1.9rem; margin:0;">Routes &mdash; Week of {{ gen_date }}</h1>
+  <a href="/download/assignments/{{ results_id }}" class="btn btn-outline btn-sm" style="width:auto;">
+    Save Route Assignments (.csv)
+  </a>
+</div>
 
 <!-- Top-line metrics -->
 <div class="metric-grid">
@@ -188,6 +193,9 @@
   <button class="tab-btn" data-tab="tab-kitchen" onclick="switchTab('tab-kitchen', this)">Kitchen List</button>
   <button class="tab-btn" data-tab="tab-doubles" onclick="switchTab('tab-doubles', this)">
     Double Deliveries{% if double_deliveries|length > 0 %} ({{ double_deliveries|length }}){% endif %}
+  </button>
+  <button class="tab-btn" data-tab="tab-audit"  onclick="switchTab('tab-audit', this)">
+    Audit{% if audit_checks %}{% set fails = audit_checks|selectattr('status','equalto','fail')|list %}{% set warns = audit_checks|selectattr('status','equalto','warn')|list %}{% if fails|length > 0 %} <span style="color:var(--danger)">&#x2715; {{ fails|length }}</span>{% elif warns|length > 0 %} <span style="color:#f0a500">&#x26A0; {{ warns|length }}</span>{% else %} <span style="color:var(--accent)">&#x2713;</span>{% endif %}{% endif %}
   </button>
   <button class="tab-btn" data-tab="tab-flags"   onclick="switchTab('tab-flags', this)">
     Flags{% if n_flags > 0 %} ({{ n_flags }}){% endif %}
@@ -371,6 +379,50 @@
   </div>
   {% else %}
   <div class="alert alert-ok" style="margin-top:1rem;">No twice-weekly members this run — every stop appears exactly once.</div>
+  {% endif %}
+</div>
+
+<!-- Audit tab -->
+<div class="tab-panel" id="tab-audit">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.75rem;">
+    <div>
+      <h2 style="font-size:1.25rem; margin-bottom:0.25rem;">Route Quality Audit</h2>
+      <div class="route-caption">10 automated checks run at generation time.</div>
+    </div>
+  </div>
+  {% if audit_checks %}
+  {% set fails = audit_checks|selectattr('status','equalto','fail')|list %}
+  {% set warns = audit_checks|selectattr('status','equalto','warn')|list %}
+  {% if fails %}
+  <div class="alert alert-error" style="margin-bottom:0.75rem;">{{ fails|length }} check(s) failed — review before delivery.</div>
+  {% elif warns %}
+  <div class="alert alert-warn" style="margin-bottom:0.75rem;">{{ warns|length }} warning(s) — review recommended.</div>
+  {% else %}
+  <div class="alert alert-ok" style="margin-bottom:0.75rem;">All checks passed.</div>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th style="width:2rem;"></th><th>Check</th><th>Detail</th></tr>
+      </thead>
+      <tbody>
+        {% for c in audit_checks %}
+        <tr>
+          <td style="text-align:center; font-size:1rem;">
+            {% if c.status == 'pass' %}<span style="color:var(--accent)">&#x2713;</span>
+            {% elif c.status == 'fail' %}<span style="color:var(--danger)">&#x2715;</span>
+            {% elif c.status == 'warn' %}<span style="color:#f0a500">&#x26A0;</span>
+            {% else %}<span style="color:#6688aa">&#x2139;</span>{% endif %}
+          </td>
+          <td style="font-weight:500;">{{ c.check }}</td>
+          <td style="color:var(--muted); font-size:0.82rem;">{{ c.detail }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="alert alert-ok">No audit data — regenerate routes to run checks.</div>
   {% endif %}
 </div>
 

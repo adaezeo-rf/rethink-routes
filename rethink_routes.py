@@ -617,8 +617,26 @@ def detect_household_clusters(stops):
 MANIFEST_HEADERS = [
     "Stop", "Member ID", "Address", "Apt/Unit", "City", "Zip",
     "Phone", "Box Size", "Allergens", "Delivery Instructions",
-    "Available Days", "Notes", "Delivery", "Flag",
+    "Available Days", "Notes", "Delivery", "Tape", "Flag",
 ]
+
+
+def tape_color(stop: dict) -> str:
+    """Return tape-colour label for a stop's box.
+
+    Rules (checked in priority order):
+    - Any allergen containing "veg" (vegetarian/vegan) → Green
+    - Small box  → Red
+    - Medium box → Blue
+    - Large box  → Yellow
+    - Four-Day   → White
+    """
+    allergens = (stop.get("allergens") or "").lower()
+    if "veg" in allergens:
+        return "Green"
+    return {"Small": "Red", "Medium": "Blue", "Large": "Yellow", "Four-Day": "White"}.get(
+        stop.get("box_size", ""), "White"
+    )
 
 
 def write_manifest(ordered_stops, path):
@@ -639,6 +657,8 @@ def write_manifest(ordered_stops, path):
                 s["delivery_instructions"],
                 s["available_days"],
                 s["notes"],
+                s.get("delivery_type", ""),
+                tape_color(s),
                 s["flag"],
             ])
 

@@ -3,6 +3,7 @@
 import csv
 import io
 import os
+import re
 import sys
 import uuid
 import warnings
@@ -36,6 +37,7 @@ from rethink_routes import (
     DEPOT_START,
     MANIFEST_HEADERS,
     MAX_ROUTE_MILES,
+    MAX_STOPS_HARD,
     MAX_STOPS_SOFT,
     ROUTES,
     ZIP_OVERRIDES,
@@ -46,6 +48,7 @@ from rethink_routes import (
     load_cache,
     save_cache,
     optimize_route,
+    tape_color,
 )
 
 warnings.filterwarnings("ignore")
@@ -67,6 +70,32 @@ _store: dict = {}
 
 def _authed() -> bool:
     return bool(session.get("authed"))
+
+
+# ── Day-parsing helper ────────────────────────────────────────────────────────
+
+_DAY_ALIASES: dict[str, str] = {
+    "mon": "Monday",   "monday": "Monday",
+    "tue": "Tuesday",  "tues": "Tuesday",  "tuesday": "Tuesday",
+    "wed": "Wednesday","wednesday": "Wednesday",
+    "thu": "Thursday", "thur": "Thursday", "thurs": "Thursday", "thursday": "Thursday",
+    "fri": "Friday",   "friday": "Friday",
+}
+
+
+def _parse_preferred_days(avail_str: str) -> list:
+    """Extract ordered weekday names from strings like 'Monday & Thursday'.
+
+    Returns e.g. ['Monday', 'Thursday'].  Unknown tokens are silently skipped.
+    """
+    parts = re.split(r"[,&/\s]+", avail_str.strip())
+    days: list[str] = []
+    for p in parts:
+        key = p.strip().lower().rstrip(".")
+        d = _DAY_ALIASES.get(key)
+        if d and d not in days:
+            days.append(d)
+    return days
 
 
 # ── Pure helpers (ported from app.py) ─────────────────────────────────────────
@@ -130,6 +159,9 @@ def parse_excel(fileobj):
         twice_delivery = twice_col and str(row[col[twice_col]] or "").strip().lower() == "yes"
         assigned_route = str(row[col[route_col]] or "").strip().upper() if route_col else ""
 
+        # Parse preferred delivery days from the "Available Delivery Days" column
+        pref_days = _parse_preferred_days(avail) if twice_delivery else []
+
         base_stop = {
             "member_id":             member_id,
             "addr1":                 addr1,
@@ -148,14 +180,19 @@ def parse_excel(fileobj):
             "latlon":                None,
             "delivery_type":         "",          # "First Delivery" | "Second Delivery" | ""
             "assigned_route":        assigned_route,
+            "preferred_day":         "",          # set for twice-weekly stops
         }
 
         if twice_delivery:
-            # First delivery: honour any manual route assignment
-            stops.append({**base_stop, "delivery_type": "First Delivery"})
-            # Second delivery: auto-assign (blank assigned_route so spacing logic runs)
-            stops.append({**base_stop, "delivery_type": "Second Delivery",
-                          "assigned_route": ""})
+            # First delivery: honour manual assignment; prefer first available day
+            stops.append({**base_stop,
+                          "delivery_type": "First Delivery",
+                          "preferred_day": pref_days[0] if len(pref_days) > 0 else ""})
+            # Second delivery: auto-assign; prefer second available day
+            stops.append({**base_stop,
+                          "delivery_type":  "Second Delivery",
+                          "assigned_route": "",
+                          "preferred_day":  pref_days[1] if len(pref_days) > 1 else ""})
         else:
             stops.append(base_stop)
 
@@ -193,7 +230,8 @@ def manifest_to_csv(ordered_stops, route_info=None, contact="Oscar"):
         w.writerow([
             i, s["member_id"], s["addr1"], s["addr2"], s["city"], s["zipcode"],
             s["phone"], s["box_size"], s["allergens"], s["delivery_instructions"],
-            s["available_days"], s["notes"], s.get("delivery_type", ""), s["flag"],
+            s["available_days"], s["notes"], s.get("delivery_type", ""),
+            tape_color(s), s["flag"],
         ])
     return buf.getvalue().encode("utf-8")
 
@@ -221,7 +259,7 @@ def kitchen_to_csv(kitchen_rows):
 _XLSX_HEADERS = [
     "Stop", "Member ID", "Address", "Apt/Unit", "City", "Zip",
     "Phone", "Box Size", "Allergens", "Delivery Instructions",
-    "Available Days", "Notes", "Delivery", "Flag", "Household",
+    "Available Days", "Notes", "Delivery", "Tape", "Flag", "Household",
 ]
 
 _HOUSEHOLD_FILLS = [
@@ -272,7 +310,7 @@ def manifest_to_xlsx(ordered_stops, route_info, household_clusters, contact="Osc
             i + 1, s["member_id"], s["addr1"], s["addr2"], s["city"],
             s["zipcode"], s["phone"], s["box_size"], s["allergens"],
             s["delivery_instructions"], s["available_days"], s["notes"],
-            s.get("delivery_type", ""), s["flag"], hh_letter,
+            s.get("delivery_type", ""), tape_color(s), s["flag"], hh_letter,
         ]
         hh_fill = group_fill_map.get(hh_letter)
         for c_idx, val in enumerate(values, start=1):
@@ -419,6 +457,14 @@ def run_generation(all_stops, all_flags, distance_cap=MAX_ROUTE_MILES, contact_n
             else:
                 candidates = matching
 
+            # Honour preferred delivery day (parsed from "Available Delivery Days")
+            pref = stop.get("preferred_day", "")
+            if pref and candidates:
+                pref_filtered = [r for r in candidates
+                                 if letter_to_day.get(r[0], "") == pref]
+                if pref_filtered:
+                    candidates = pref_filtered
+
             best = min(candidates, key=lambda r: len(route_buckets[r[0]]))
             route_buckets[best[0]].append((stop, best[2]))
             _register(best[0], addr_key)
@@ -542,6 +588,126 @@ def run_generation(all_stops, all_flags, distance_cap=MAX_ROUTE_MILES, contact_n
     return results, kitchen_rows, flags, double_deliveries
 
 
+def run_audit(results, kitchen_rows, flags, double_deliveries, distance_cap):
+    """Run quality checks and return a list of {check, status, detail} dicts.
+
+    status values: 'pass' | 'warn' | 'fail' | 'info'
+    """
+    checks: list[dict] = []
+
+    def _add(status, check, detail=""):
+        checks.append({"check": check, "status": status, "detail": detail})
+
+    # 1. Routes produced
+    if not results:
+        _add("fail", "Routes generated", "No routes were produced — check ZIP coverage")
+    else:
+        _add("pass", "Routes generated", f"{len(results)} route(s) with stops")
+
+    # 2. Stop-count consistency between route list and kitchen rows
+    total_route  = sum(len(r["stops"]) for r in results)
+    total_kitchen = sum(row["Total Stops"] for row in kitchen_rows)
+    if total_route == total_kitchen:
+        _add("pass", "Stop count consistent",
+             f"{total_route} stops across {len(results)} routes")
+    else:
+        _add("fail", "Stop count consistent",
+             f"Route list ({total_route}) ≠ kitchen list ({total_kitchen})")
+
+    # 3. Unknown box sizes
+    unknown_total = sum(row.get("Unknown", 0) for row in kitchen_rows)
+    if unknown_total == 0:
+        _add("pass", "Box sizes all valid", "No Unknown box sizes")
+    else:
+        _add("warn", "Box sizes all valid",
+             f"{unknown_total} stop(s) have Unknown box size — check spreadsheet formatting")
+
+    # 4. Stop limits
+    over_hard = [r for r in results if len(r["stops"]) > MAX_STOPS_SOFT]
+    over_soft = [r for r in results
+                 if MAX_STOPS_HARD < len(r["stops"]) <= MAX_STOPS_SOFT]
+    if over_hard:
+        _add("fail", "Stop limits",
+             f"Route(s) {', '.join(r['letter'] for r in over_hard)} exceed hard limit "
+             f"({MAX_STOPS_SOFT} stops)")
+    elif over_soft:
+        _add("warn", "Stop limits",
+             f"Route(s) {', '.join(r['letter'] for r in over_soft)} above "
+             f"{MAX_STOPS_HARD} stops (dense-cluster allowance)")
+    else:
+        _add("pass", "Stop limits", f"All routes at or below {MAX_STOPS_HARD} stops")
+
+    # 5. Distance cap
+    over_dist = [r for r in results if r["opt_dist"] > distance_cap]
+    if over_dist:
+        _add("warn", "Distance cap",
+             f"Route(s) {', '.join(r['letter'] for r in over_dist)} exceed "
+             f"{distance_cap:.0f}-mile cap")
+    else:
+        _add("pass", "Distance cap", f"All routes within {distance_cap:.0f} miles")
+
+    # 6. Geocoding failures (stops without coordinates)
+    geo_fails = [s for r in results for s in r["stops"] if not s.get("latlon")]
+    if geo_fails:
+        _add("warn", "Geocoding",
+             f"{len(geo_fails)} stop(s) missing coordinates — excluded from maps")
+    else:
+        _add("pass", "Geocoding", "All stops geocoded successfully")
+
+    # 7. Twice-weekly placements
+    if double_deliveries:
+        unplaced = [
+            dd for dd in double_deliveries
+            if not any(d["delivery_type"] == "Second Delivery" for d in dd["deliveries"])
+        ]
+        if unplaced:
+            _add("fail", "Double deliveries",
+                 f"{len(unplaced)} twice-weekly member(s) missing second delivery — "
+                 "add ZIPs to ROUTES in rethink_routes.py")
+        else:
+            _add("pass", "Double deliveries",
+                 f"All {len(double_deliveries)} twice-weekly member(s) placed on 2 routes")
+    else:
+        _add("info", "Double deliveries", "No twice-weekly members this run")
+
+    # 8. Member-level flags (cancel/hold/allergen notes in spreadsheet)
+    flag_stops = [s for r in results for s in r["stops"] if s.get("flag")]
+    if flag_stops:
+        _add("warn", "Member flags",
+             f"{len(flag_stops)} stop(s) flagged — review before loading trucks")
+    else:
+        _add("pass", "Member flags", "No individual member flags")
+
+    # 9. Duplicate member IDs within a single route (excluding intentional twice-weekly)
+    dupes: list[str] = []
+    for r in results:
+        seen: dict[str, int] = {}
+        for s in r["stops"]:
+            if s.get("delivery_type"):
+                continue  # First/Second Delivery duplicates are expected
+            seen[s["member_id"]] = seen.get(s["member_id"], 0) + 1
+        for mid, cnt in seen.items():
+            if cnt > 1:
+                dupes.append(f"Route {r['letter']}: Member {mid} ×{cnt}")
+    if dupes:
+        _add("fail", "Duplicate member IDs", "; ".join(dupes))
+    else:
+        _add("pass", "Duplicate member IDs", "No unexpected duplicates in any route")
+
+    # 10. Allergen coverage
+    allergen_stops = [
+        s for r in results for s in r["stops"]
+        if s.get("allergens") and s["allergens"].lower() not in ("none", "")
+    ]
+    if allergen_stops:
+        _add("info", "Allergen notes",
+             f"{len(allergen_stops)} stop(s) with dietary restrictions — verify kitchen packing")
+    else:
+        _add("pass", "Allergen notes", "No allergen notes this run")
+
+    return checks
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/login", methods=["GET", "POST"])
@@ -622,12 +788,15 @@ def generate():
         session["error"] = str(e)
         return redirect(url_for("index"))
 
+    audit_checks = run_audit(results, kitchen_rows, flags, double_deliveries, distance_cap)
+
     results_id = str(uuid.uuid4())
     _store[results_id] = {
         "results":            results,
         "kitchen_rows":       kitchen_rows,
         "flags":              flags,
         "double_deliveries":  double_deliveries,
+        "audit_checks":       audit_checks,
         "generated_date":     date.today().isoformat(),
         "contact_name":       contact_name,
         "distance_cap":       distance_cap,
@@ -653,6 +822,7 @@ def results(results_id):
     kitchen_rows      = payload["kitchen_rows"]
     flags             = payload["flags"]
     double_deliveries = payload.get("double_deliveries", [])
+    audit_checks      = payload.get("audit_checks", [])
     gen_date          = payload["generated_date"]
     contact_name      = payload["contact_name"]
     distance_cap      = payload.get("distance_cap", MAX_ROUTE_MILES)
@@ -709,6 +879,7 @@ def results(results_id):
         parsed_count=parsed.get("count", 0),
         distance_cap=distance_cap,
         double_deliveries=double_deliveries,
+        audit_checks=audit_checks,
     )
 
 
@@ -820,6 +991,35 @@ def download_kitchen(results_id):
     fname = f"Kitchen_Packing_List_{payload['generated_date']}.csv"
     return send_file(io.BytesIO(data), mimetype="text/csv",
                      as_attachment=True, download_name=fname)
+
+
+@app.route("/download/assignments/<results_id>")
+def download_assignments(results_id):
+    """Download a two-column CSV mapping every member ID to its route letter.
+
+    The team can keep this file and upload it next week as the 'Route' column
+    to preserve assignments without re-running ZIP logic.
+    """
+    if not _authed():
+        return redirect(url_for("login"))
+    payload = _store.get(results_id)
+    if not payload:
+        return redirect(url_for("index"))
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Member ID", "Route"])
+    for route in payload["results"]:
+        for s in route["stops"]:
+            w.writerow([s["member_id"], route["letter"]])
+
+    fname = f"Route_Assignments_{payload['generated_date']}.csv"
+    return send_file(
+        io.BytesIO(buf.getvalue().encode("utf-8")),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=fname,
+    )
 
 
 @app.route("/clear-cache", methods=["POST"])
