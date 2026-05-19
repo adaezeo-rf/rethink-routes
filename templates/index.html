@@ -13,6 +13,15 @@
   <input type="file" id="file-input" accept=".xlsx">
   <div id="upload-status" class="sidebar-caption" style="min-height:1.2em;"></div>
 
+  <span class="sidebar-label" style="margin-top:0.75rem;">
+    Previous week's assignments
+    <span style="font-weight:400; color:var(--muted);"> (optional .csv)</span>
+  </span>
+  <input type="file" id="assignments-input" accept=".csv" {% if parsed_count == 0 %}disabled{% endif %}>
+  <div id="assignments-status" class="sidebar-caption" style="min-height:1.2em;">
+    {% if parsed_count == 0 %}<span style="color:var(--muted);">Upload member list first</span>{% endif %}
+  </div>
+
   <hr class="divider">
 
   <form id="generate-form" method="post" action="/generate">
@@ -89,19 +98,45 @@
 
 {% block scripts %}
 <script>
-  const fileInput    = document.getElementById('file-input');
-  const uploadStatus = document.getElementById('upload-status');
-  const generateBtn  = document.getElementById('generate-btn');
-  const generateForm = document.getElementById('generate-form');
-  const overlay      = document.getElementById('loading-overlay');
-  const loadingText  = document.getElementById('loading-text');
-  let   newAddresses = 0;
+  const fileInput        = document.getElementById('file-input');
+  const uploadStatus     = document.getElementById('upload-status');
+  const assignmentsInput = document.getElementById('assignments-input');
+  const assignStatus     = document.getElementById('assignments-status');
+  const generateBtn      = document.getElementById('generate-btn');
+  const generateForm     = document.getElementById('generate-form');
+  const overlay          = document.getElementById('loading-overlay');
+  const loadingText      = document.getElementById('loading-text');
+  let   newAddresses     = 0;
 
   {% if parsed_count > 0 %}
   uploadStatus.textContent = '{{ parsed_count }} active members loaded';
   uploadStatus.style.color = 'var(--accent)';
   generateBtn.disabled = false;
   {% endif %}
+
+  // ── Assignments CSV upload ────────────────────────────────────────
+  assignmentsInput.addEventListener('change', async () => {
+    const file = assignmentsInput.files[0];
+    if (!file) return;
+    assignStatus.textContent = 'Reading…';
+    assignStatus.style.color = 'var(--muted)';
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res  = await fetch('/upload-assignments', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error) {
+        assignStatus.textContent = data.error;
+        assignStatus.style.color = 'var(--danger)';
+      } else {
+        assignStatus.textContent = `${data.count} previous assignments loaded — routes will be preserved`;
+        assignStatus.style.color = 'var(--accent)';
+      }
+    } catch (e) {
+      assignStatus.textContent = 'Upload failed — try again.';
+      assignStatus.style.color = 'var(--danger)';
+    }
+  });
 
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
@@ -129,6 +164,12 @@
           + (newAddresses > 0 ? ` · ${newAddresses} new addresses, ${cached} cached` : ' · all addresses cached');
         uploadStatus.style.color = 'var(--accent)';
         generateBtn.disabled = false;
+        // Enable the assignments input now that a member list is loaded
+        assignmentsInput.disabled = false;
+        if (!assignmentsInput.files.length) {
+          assignStatus.textContent = 'Have last week's file? Upload it to preserve assignments.';
+          assignStatus.style.color = 'var(--muted)';
+        }
       }
     } catch (e) {
       uploadStatus.textContent = 'Upload failed — try again.';

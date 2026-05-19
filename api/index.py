@@ -747,6 +747,34 @@ def index():
     )
 
 
+@app.route("/upload-assignments", methods=["POST"])
+def upload_assignments():
+    """Parse a previous week's Route Assignments CSV and stash it in the parse store."""
+    if not _authed():
+        return jsonify({"error": "Not authenticated"}), 401
+    parse_id = session.get("parse_id")
+    if not parse_id or parse_id not in _store:
+        return jsonify({"error": "Upload a member list first, then load assignments."}), 400
+    file = request.files.get("file")
+    if not file:
+        return jsonify({"error": "No file provided"}), 400
+    try:
+        content = file.read().decode("utf-8-sig")   # strip BOM if present
+        reader  = csv.DictReader(io.StringIO(content))
+        valid_letters = {l for l, *_ in ROUTES}
+        assignments: dict[str, str] = {}
+        for row in reader:
+            mid   = str(row.get("Member ID") or "").strip().replace(".0", "")
+            route = str(row.get("Route")     or "").strip().upper()
+            if mid and route in valid_letters:
+                assignments[mid] = route
+    except Exception as exc:
+        return jsonify({"error": f"Could not parse assignments file: {exc}"}), 400
+
+    _store[parse_id]["prev_assignments"] = assignments
+    return jsonify({"count": len(assignments)})
+
+
 @app.route("/upload", methods=["POST"])
 def upload():
     if not _authed():
@@ -780,9 +808,21 @@ def generate():
     distance_cap = float(request.form.get("distance_cap", MAX_ROUTE_MILES))
     contact_name = request.form.get("contact_name", "Oscar").strip() or "Oscar"
 
+    # Apply previous-week assignments without mutating the stored stop list
+    prev_assignments = parsed.get("prev_assignments", {})
+    all_stops = parsed["stops"]
+    if prev_assignments:
+        all_stops = []
+        for s in parsed["stops"]:
+            s2 = dict(s)
+            # Only override if the member doesn't already have a manual assignment
+            if not s2.get("assigned_route") and s2["member_id"] in prev_assignments:
+                s2["assigned_route"] = prev_assignments[s2["member_id"]]
+            all_stops.append(s2)
+
     try:
         results, kitchen_rows, flags, double_deliveries = run_generation(
-            parsed["stops"], parsed["flags"], distance_cap, contact_name
+            all_stops, parsed["flags"], distance_cap, contact_name
         )
     except RuntimeError as e:
         session["error"] = str(e)

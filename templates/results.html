@@ -120,6 +120,15 @@
     {% endif %}
   </div>
 
+  <span class="sidebar-label" style="margin-top:0.75rem;">
+    Previous week's assignments
+    <span style="font-weight:400; color:var(--muted);"> (optional .csv)</span>
+  </span>
+  <input type="file" id="assignments-input" accept=".csv" {% if parsed_count == 0 %}disabled{% endif %}>
+  <div id="assignments-status" class="sidebar-caption" style="min-height:1.2em;">
+    {% if parsed_count > 0 %}<span style="color:var(--muted);">Upload to lock in last week's routes</span>{% endif %}
+  </div>
+
   <hr class="divider">
 
   <form id="generate-form" method="post" action="/generate">
@@ -661,13 +670,34 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // ── Upload + generate (sidebar) ──────────────────────────────────
 
-const fileInput    = document.getElementById('file-input');
-const uploadStatus = document.getElementById('upload-status');
-const generateBtn  = document.getElementById('generate-btn');
-const generateForm = document.getElementById('generate-form');
-const overlay      = document.getElementById('loading-overlay');
-const loadingText  = document.getElementById('loading-text');
-let   newAddresses = 0;
+const fileInput        = document.getElementById('file-input');
+const uploadStatus     = document.getElementById('upload-status');
+const assignmentsInput = document.getElementById('assignments-input');
+const assignStatus     = document.getElementById('assignments-status');
+const generateBtn      = document.getElementById('generate-btn');
+const generateForm     = document.getElementById('generate-form');
+const overlay          = document.getElementById('loading-overlay');
+const loadingText      = document.getElementById('loading-text');
+let   newAddresses     = 0;
+
+assignmentsInput.addEventListener('change', async () => {
+  const file = assignmentsInput.files[0];
+  if (!file) return;
+  assignStatus.innerHTML = '<span style="color:var(--muted)">Reading…</span>';
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res  = await fetch('/upload-assignments', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.error) {
+      assignStatus.innerHTML = `<span style="color:var(--danger)">${data.error}</span>`;
+    } else {
+      assignStatus.innerHTML = `<span style="color:var(--accent)">${data.count} previous assignments loaded — routes will be preserved</span>`;
+    }
+  } catch (e) {
+    assignStatus.innerHTML = '<span style="color:var(--danger)">Upload failed — try again.</span>';
+  }
+});
 
 fileInput.addEventListener('change', async () => {
   const file = fileInput.files[0];
@@ -688,6 +718,10 @@ fileInput.addEventListener('change', async () => {
       const cached = data.count - newAddresses;
       uploadStatus.innerHTML = `<span style="color:var(--accent)">${data.count} active members found${newAddresses > 0 ? ` (${newAddresses} new, ${cached} cached)` : ' (all cached)'}</span>`;
       generateBtn.disabled = false;
+      assignmentsInput.disabled = false;
+      if (!assignmentsInput.files.length) {
+        assignStatus.innerHTML = '<span style="color:var(--muted)">Have last week's file? Upload it to preserve assignments.</span>';
+      }
     }
   } catch (e) {
     uploadStatus.innerHTML = '<span style="color:var(--danger)">Upload failed — try again.</span>';
